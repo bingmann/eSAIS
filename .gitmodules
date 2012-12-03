@@ -1,0 +1,3 @@
+[submodule "stxxl"]
+	path = stxxl
+	url = http://algohub.iti.kit.edu/algo2/stxxl/
