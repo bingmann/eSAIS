@@ -1,6 +1,6 @@
 This is a short README for our implementations of eSAIS and DC3 including LCP
 variants as described in the paper "Suffix and LCP Array in External Memory"
-presented at ALENEX'13.
+presented at ALENEX'13 and submitted to JEA's Special Edition.
 
 --- Source Code Overview
 
@@ -36,6 +36,8 @@ This except from the esactest.cc describes how to call the test program:
  * Call the program without arguments for a list of available inputs. The input
  * is loaded into a stxxl vector and then processed by the external memory
  * suffix sorters that this main program was compiled with.
+ *
+ * Size of the input can be limited via the -s command line parameter.
 
 The default external memory suffix sorter is eSAIS with LCP construction. The
 distributed source code is by default configured to use 4 GiB of RAM and the
@@ -45,7 +47,7 @@ specify where temporary files are created; this .stxxl file is described below.
 --- Building esactest
 
 To build the program "cmake" version 2.8 or higher and a recent gcc C++
-compiler are required. Having "eSAIS-DC3-LCP-0.5.tar" unpacked in the current
+compiler are required. Having "eSAIS-DC3-LCP-X.Y.Z.tar" unpacked in the current
 directory, the following commands will compile and run the esactest program,
 compiled with the included custom STXXL library:
 
@@ -62,6 +64,12 @@ manager.
 
 To build separate binaries for each algorithm variant add -DBUILD_ALL=ON to the
 cmake configuration line.
+
+Here is a simple example to generate suffix and LCP array of a random input:
+
+$ mkdir artificial
+$ ./esactest -s 10mb --writeinput --writeoutput artificial/rand10
+$ ls -l artifical/
 
 --- Configuring STXXL Temporary Files
 
@@ -89,4 +97,4 @@ http://stxxl.sourceforge.net/
 
 --- Exits
 
-Written 2012-11-26 by Timo Bingmann.
+Written 2012-11-26 by Timo Bingmann, updated 2013-03-30.

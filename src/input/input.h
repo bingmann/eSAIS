@@ -5,7 +5,7 @@
  * memory algorithms.
  *
  ******************************************************************************
- * Copyright (C) 2012 Timo Bingmann <tb@panthema.net>
+ * Copyright (C) 2012-2013 Timo Bingmann <tb@panthema.net>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -77,8 +77,14 @@ public:
 
     static const int K	= 256;
 
+    static inline bool size_error()
+    {
+        std::cout << "Must specify a size limit for artificial data sources.\n";
+        return false;
+    }
+
     template <typename Container>
-    bool generate_artificial(const datasource& datasource, Container& string, size_t reducesize)
+    bool generate_artificial(const datasource& datasource, Container& string)
     {
         bool fixzero = false;
 
@@ -87,114 +93,101 @@ public:
         // check for size suffix after datasource name
 
         std::string dataname = datasource.name;
-        size_t size = 0;
+        size_t size = gopt_sizelimit;
 
-        std::string::size_type dashpos = dataname.rfind('-');
-        if (dashpos != std::string::npos)
+        if (!size)
         {
-            std::string sizesuffix = dataname.substr(dashpos+1);
-            dataname = dataname.substr(0, dashpos);
-
-            // read number and kb/mb/gb suffix
-
-            char* endptr;
-            size = strtoul(sizesuffix.c_str(),&endptr,10);
-            if (!endptr) return false;
-
-            sizesuffix = endptr;
-
-            if (sizesuffix == "b")
-                size *= 1;
-            else if (sizesuffix == "kb")
-                size *= 1024;
-            else if (sizesuffix == "mb")
-                size *= 1024*1024;
-            else if (sizesuffix == "gb")
-                size *= 1024*1024*1024;
-            else
-                return false;
-
-            if (reducesize) size = reducesize;
-        }
-        else if (reducesize)
-        {
-            size = reducesize;
-        }
-        else
-        {
-            if ( datasource.default_size == 0 ) {
-                std::cout << "Error: unknown size for artificial data source.\n";
-                return false;
-            }
             size = datasource.default_size;
 
-            if (reducesize) size = reducesize;
+            if (size > gopt_sizelimit) size = gopt_sizelimit;
         }
 
         // generate data
 
         if (dataname == "artificial/aaa")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 'a';
         }
         else if (dataname == "artificial/abc")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 'a' + (i % 3);
         }
         else if (dataname == "artificial/ascseq20")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 'a' + (i % 20);
         }
         else if (dataname == "artificial/ascseq250")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 1 + (i % 250);
         }
         else if (dataname == "artificial/descseq250")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 250 - (i % 250);
         }
         else if (dataname == "artificial/ascseq2500")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 1 + ((i / 10) % 250);
         }
         else if (dataname == "artificial/descseq2500")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 250 - ((i / 10) % 250);
         }
         else if (dataname == "artificial/ascseq25000")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 1 + ((i / 100) % 250);
         }
         else if (dataname == "artificial/descseq250000")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 250 - ((i / 1000) % 250);
         }
         else if (dataname == "artificial/squares250")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             for (size_t i = 0; i < string.size(); ++i)
                 string[i] = 1 + ((i*i) % 250);
         }
         else if (dataname == "artificial/rand250")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             srand(913427589);
             for (size_t i = 0; i < string.size(); ++i)
@@ -202,6 +195,8 @@ public:
         }
         else if (dataname == "artificial/rand256")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             srand(913427589);
             for (size_t i = 0; i < string.size(); ++i)
@@ -209,6 +204,8 @@ public:
         }
         else if (dataname == "artificial/randrepeat")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             srand(913427589);
             for (size_t i = 0; i < string.size()/2; ++i)
@@ -220,6 +217,8 @@ public:
         }
         else if (dataname == "artificial/rand10")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             srand(913427589);
             for (size_t i = 0; i < string.size(); ++i)
@@ -227,53 +226,71 @@ public:
         }
         else if (dataname == "artificial/debruijn-(10,8)")
         {
+            if (!size) return size_error();
+
             string.resize(1e8);
             debruijn::generate(10,8,string);
             fixzero = true;
         }
         else if (dataname == "artificial/debruijn-(100,4)")
         {
+            if (!size) return size_error();
+
             string.resize(1e8);
             debruijn::generate(100,4,string);
             fixzero = true;
         }
         else if (dataname == "artificial/fibonacci")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             fibonacci::generate(string);
         }
         else if (dataname == "artificial/yutatest1")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             yuta_tests::generate1(string);
             fixzero = true;
         }
         else if (dataname == "artificial/yutatest2")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             yuta_tests::generate2(string);
             fixzero = true;
         }
         else if (dataname == "artificial/yutatest3")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             yuta_tests::generate3(string);
             fixzero = true;
         }
         else if (dataname == "artificial/yutatest4")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             yuta_tests::generate4(string);
             fixzero = true;
         }
         else if (dataname == "artificial/yutatest5")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             yuta_tests::generate5(string);
             fixzero = true;
         }
         else if (dataname == "artificial/skyline")
         {
+            if (!size) return size_error();
+
             string.resize(size);
             skyline::generate(string);
         }
@@ -297,7 +314,7 @@ public:
     }
 
     template <typename Container>
-    bool load_corpusfile(const datasource& datasource, Container& string, size_t reducesize)
+    bool load_corpusfile(const datasource& datasource, Container& string)
     {
         std::string dataname = datasource.name;
 
@@ -326,7 +343,7 @@ public:
                 }
             }
 
-            if (reducesize && filesize > reducesize) filesize = reducesize;
+            if (gopt_sizelimit && filesize > gopt_sizelimit) filesize = gopt_sizelimit;
 
             gzFile gz = gzopen(oss.str().c_str(), "rb");
             if (!gz) {
@@ -376,7 +393,7 @@ public:
 
             std::cout << " - size = " << filesize << std::endl;
 
-            if (reducesize && filesize > reducesize) filesize = reducesize;
+            if (gopt_sizelimit && filesize > gopt_sizelimit) filesize = gopt_sizelimit;
 
             string.resize(filesize);
 
@@ -425,10 +442,6 @@ public:
     template <typename Container>
     bool get(const datasource& datasource, Container& string)
     {
-        char* endptr = NULL;
-        size_t reducesize = getenv("SIZE") ? strtoul(getenv("SIZE"),&endptr,10) : 0;
-        if (endptr && *endptr != '\0') reducesize = 0;
-
         if (datasource.name.substr(0,7) == "simple/")
         {
             std::string charstring = datasource.name.substr(7);
@@ -437,10 +450,10 @@ public:
             std::copy( charstring.begin(), charstring.end(), string.begin() );
             //string.push_back(0);
         }
-        else if (generate_artificial(datasource,string,reducesize))
+        else if (generate_artificial(datasource,string))
         {
         }
-        else if (load_corpusfile(datasource,string,reducesize))
+        else if (load_corpusfile(datasource,string))
         {
         }
         else
@@ -449,9 +462,9 @@ public:
             return false;
         }
 
-        if (reducesize && string.size() > reducesize)
+        if (gopt_sizelimit && string.size() > gopt_sizelimit)
         {
-            string.resize(reducesize);
+            string.resize(gopt_sizelimit);
             string.push_back(0);	// readd zero character at end
         }
 
@@ -459,7 +472,7 @@ public:
 
         std::cout << "testing " << datasource.name << " size " << string.size() << "\n";
 
-        if (getenv("WRITEINPUT") && *getenv("WRITEINPUT") == '1')  // write out data into file
+        if (gopt_writeinput)  // write out data into file
         {
             std::ofstream out(datasource.name.c_str());
 
@@ -567,53 +580,80 @@ datasource_list_type get_datasource_list()
     return list;
 };
 
+bool print_datasource_list()
+{
+    datasource_list_type datasource_list = get_datasource_list();        // default list
+
+    // parse command line parameters
+
+    std::cout << "Available data sources:\n";
+
+    unsigned int i = 0;
+    for (datasource_list_type::const_iterator ds = datasource_list.begin();
+         ds != datasource_list.end(); ++ds, ++i)
+    {
+        std::cout << std::setw(4) << i
+                  << "  " << std::left << std::setw(60) << ds->name
+                  << " " << std::right << std::setw(20) << ds->default_size << "\n";
+    }
+    return false;
+}
+
 bool select_datasource_list(int argc, char* argv[], datasource_list_type& datasource_list)
 {
     datasource_list = get_datasource_list();        // default list
 
     // parse command line parameters
 
-    if (argc == 1)
-    {
-        std::cout << "Available data sources:\n";
-
-        unsigned int i = 0;
-        for (datasource_list_type::const_iterator ds = datasource_list.begin();
-             ds != datasource_list.end(); ++ds, ++i)
+    char *endptr;
+    int seqstart = strtol(argv[0],&endptr,10);
+    if (*endptr) {
+        // argument is not a number
+        datasource_list.clear();
+        for (int ai = 0; ai < argc; ++ai)
         {
-            std::cout << std::setw(4) << i
-                      << "  " << std::left << std::setw(60) << ds->name
-                      << " " << std::right << std::setw(20) << ds->default_size << "\n";
+            datasource ds = { argv[ai], 0 };
+            datasource_list.push_back(ds);
         }
-        return false;
     }
-    else
+    else if (argc == 2)
     {
-        char *endptr;
-        int seqstart = strtol(argv[1],&endptr,10);
+        int seqend = strtol(argv[1],&endptr,10);
         if (*endptr) {
-            // argument is not a number
-            datasource_list.clear();
-            for (int ai = 1; ai < argc; ++ai)
-            {
-                datasource ds = { argv[ai], 0 };
-                datasource_list.push_back(ds);
-            }
+            std::cout << "Bad number for sequence end\n";
+            return false;
         }
-        else if (argc == 3)
+        else
         {
-            int seqend = strtol(argv[2],&endptr,10);
-            if (*endptr) {
-                std::cout << "Bad number for sequence end\n";
-            }
-            else
-            {
-                seqend = std::max<size_t>(seqend, datasource_list.size()-1);
-                datasource_list_type newlist ( datasource_list.begin() + seqstart,
-                                               datasource_list.begin() + seqend+1 );
-                datasource_list.swap(newlist);
-            }
+            seqend = std::max<size_t>(seqend, datasource_list.size()-1);
+            datasource_list_type newlist ( datasource_list.begin() + seqstart,
+                                           datasource_list.begin() + seqend+1 );
+            datasource_list.swap(newlist);
         }
-        return true;
     }
+    return true;
+}
+
+/// Parse a string like "343KB" or "44g" into the corresponding size in bytes
+bool parse_filesize(const char* str, size_t& outsize)
+{
+    char* endptr;
+    outsize = strtoul(str,&endptr,10);
+    if (!endptr) return false;
+
+    if ( *endptr == 0 || ( (*endptr == 'b' || *endptr == 'B') && *(endptr+1) == 0) )
+        outsize *= 1;
+    else if ( (*endptr == 'k' || *endptr == 'K') &&
+              (*(endptr+1) == 0 || ( (*(endptr+1) == 'b' || *(endptr+1) == 'B') && *(endptr+2) == 0) ) )
+        outsize *= 1024;
+    else if ( (*endptr == 'm' || *endptr == 'M') &&
+              (*(endptr+1) == 0 || ( (*(endptr+1) == 'b' || *(endptr+1) == 'B') && *(endptr+2) == 0) ) )
+        outsize *= 1024*1024;
+    else if ( (*endptr == 'g' || *endptr == 'G') &&
+              (*(endptr+1) == 0 || ( (*(endptr+1) == 'b' || *(endptr+1) == 'B') && *(endptr+2) == 0) ) )
+        outsize *= 1024*1024*1024;
+    else
+        return false;
+
+    return true;
 }

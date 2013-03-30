@@ -76,6 +76,8 @@ public:
         //++m_right;
         m_right = index+1;
 
+        //std::cout << "RMQ_Stack: set[" << index << "] = " << val << "\n";
+
         //print();
     }
 
@@ -88,7 +90,7 @@ public:
 
         itemciter_type p = std::lower_bound(m_stack.begin(), m_stack.end(), left, ItemCmpIndex);
 
-        //std::cout << "rmq(" << left << "," << right << ") = " << p->minimum << "\n";
+        //std::cout << "RMQ_Stack: query(" << left << "," << right << ") = " << p->minimum << "\n";
 
         return p->minimum;
     }
@@ -103,6 +105,8 @@ public:
     /// Clear data structure
     void clear()
     {
+        //std::cout << "RMQ_Stack: clear()\n";
+
         m_right = 0;
         m_stack.clear();
     }
@@ -116,7 +120,7 @@ public:
     /// Print stack as tuples
     void print()
     {
-        std::cout << "Stack: ";
+        std::cout << "RMQ_Stack: ";
         for (itemiter_type i = m_stack.begin(); i != m_stack.end(); ++i)
         {
             std::cout << "(" << i->index << "," << i->minimum << ") ";

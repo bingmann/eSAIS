@@ -40,15 +40,16 @@
     }										\
 } while(0)
 
-#ifdef MALLOCCOUNT
+#ifdef MALLOC_COUNT
 
-// prototypes to call the functions in malloccount.c
-extern "C" size_t my_memory_current();
-extern "C" size_t my_memory_maximum();
+#include "malloc_count.h"
 
 static size_t dmlastsize = 0;
 static size_t dklastsize = 0;
+
+#ifdef STXXL_IO_STATS
 stxxl::stats_data g_stats;
+#endif
 
 template <typename T>
 static inline std::string numFormat(const T& v) {
@@ -58,14 +59,21 @@ static inline std::string numFormat(const T& v) {
     return ss.str();
 }
 
+#ifdef STXXL_IO_STATS
 #define DBGMEM(text) do {                                                       \
     stxxl::stats_data nst = *stxxl::stats::get_instance();              \
     stxxl::stats_data st = nst - g_stats;                               \
-    std::cout << text << " - MEM: total= " << numFormat(my_memory_current()) << " delta= " << numFormat((ssize_t)my_memory_current() - (ssize_t)dmlastsize) << " maxalloc= " << numFormat(my_memory_maximum()) << "\n"; \
+    std::cout << text << " - MEM: total= " << numFormat(malloc_count_current()) << " delta= " << numFormat((ssize_t)malloc_count_current() - (ssize_t)dmlastsize) << " maxalloc= " << numFormat(malloc_count_peak()) << "\n"; \
     std::cout << text << " - DISK: total= " << numFormat(stxxl::block_manager::get_instance()->current_allocated()) << " delta= " << numFormat((long)stxxl::block_manager::get_instance()->current_allocated() - (long)dklastsize) << " bytes maxalloc= " << numFormat(stxxl::block_manager::get_instance()->max_allocated()) << " io volume = " << numFormat(st.get_read_volume() + st.get_written_volume()) << "\n"; \
-    dmlastsize = my_memory_current();                                           \
+    dmlastsize = malloc_count_current();                                           \
     dklastsize = stxxl::block_manager::get_instance()->current_allocated();     \
 } while (0)
+#else // !STXXL_IO_STATS
+#define DBGMEM(text) do {                                                       \
+    std::cout << text << " - MEM: total= " << numFormat(malloc_count_current()) << " delta= " << numFormat((ssize_t)malloc_count_current() - (ssize_t)dmlastsize) << " maxalloc= " << numFormat(malloc_count_peak()) << "\n"; \
+    dmlastsize = malloc_count_current();                                           \
+} while (0)
+#endif // STXXL_IO_STATS
 
 #else
 

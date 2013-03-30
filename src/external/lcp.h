@@ -141,6 +141,7 @@ void lcparray_stxxl_kasai(const StringContainer& string, const SAContainer& SA, 
         size_type i = 0;  // ISA index counter;
 
         size_type N10 = string.size() / 10;
+        if (N10 == 0) N10 = 1;
 
         lcp_sorter.push( offset_pair_type(0,0) );
 

@@ -30,39 +30,39 @@ if(BUILD_ALL)
   target_link_libraries(esactest-eSAISlcpext stxxl ${ZLIB_LIBRARIES})
   set_property(TARGET esactest-eSAISlcpext PROPERTY COMPILE_DEFINITIONS "COMPILE_ALGORITHM=esais" "ESAIS_DISCARD_UNIQUES=0" "LCP_CALC=1" "ESAIS_LCP_CALC_EXT=1")
 
-  if(WITH_MALLOCCOUNT)
+  if(WITH_MALLOC_COUNT)
 
-    add_definitions(-DMALLOCCOUNT)
+    add_definitions(-DMALLOC_COUNT)
 
-    add_library(malloccount SHARED tools/malloccount.c)
-    set_target_properties(malloccount PROPERTIES COMPILE_FLAGS "-Wstrict-prototypes -fPIC -D_GNU_SOURCE")
-    target_link_libraries(malloccount dl)
+    add_library(malloc_count SHARED tools/malloc_count.c)
+    set_target_properties(malloc_count PROPERTIES COMPILE_FLAGS "-Wstrict-prototypes -fPIC -D_GNU_SOURCE")
+    target_link_libraries(malloc_count dl)
 
-    target_link_libraries(esactest-skew malloccount)
-    target_link_libraries(esactest-skewlcp malloccount)
-    target_link_libraries(esactest-eSAIS malloccount)
-    target_link_libraries(esactest-eSAISdisc malloccount)
-    target_link_libraries(esactest-eSAISlcpint malloccount)
-    target_link_libraries(esactest-eSAISlcpext malloccount)
+    target_link_libraries(esactest-skew malloc_count)
+    target_link_libraries(esactest-skewlcp malloc_count)
+    target_link_libraries(esactest-eSAIS malloc_count)
+    target_link_libraries(esactest-eSAISdisc malloc_count)
+    target_link_libraries(esactest-eSAISlcpint malloc_count)
+    target_link_libraries(esactest-eSAISlcpext malloc_count)
 
-  endif(WITH_MALLOCCOUNT)
+  endif(WITH_MALLOC_COUNT)
 
 else()
 
   add_executable(esactest esactest.cc)
   target_link_libraries(esactest stxxl ${ZLIB_LIBRARIES})
 
-  if(WITH_MALLOCCOUNT)
+  if(WITH_MALLOC_COUNT)
 
-    add_definitions(-DMALLOCCOUNT)
+    add_definitions(-DMALLOC_COUNT)
 
-    add_library(malloccount SHARED tools/malloccount.c)
-    set_target_properties(malloccount PROPERTIES COMPILE_FLAGS "-Wstrict-prototypes -fPIC -D_GNU_SOURCE")
-    target_link_libraries(malloccount dl)
+    add_library(malloc_count SHARED tools/malloc_count.c)
+    set_target_properties(malloc_count PROPERTIES COMPILE_FLAGS "-Wstrict-prototypes -fPIC -D_GNU_SOURCE")
+    target_link_libraries(malloc_count dl)
 
-    target_link_libraries(esactest malloccount)
+    target_link_libraries(esactest malloc_count)
 
-  endif(WITH_MALLOCCOUNT)
+  endif(WITH_MALLOC_COUNT)
 
 endif()
 

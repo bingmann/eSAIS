@@ -21,8 +21,10 @@
  * is loaded into a stxxl vector and then processed by the external memory
  * suffix sorters that this main program was compiled with.
  *
+ * Size of the input can be limited via the -s command line parameter.
+ *
  ******************************************************************************
- * Copyright (C) 2012 Timo Bingmann <tb@panthema.net>
+ * Copyright (C) 2012-2013 Timo Bingmann <tb@panthema.net>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -54,6 +56,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <dirent.h>
+#include <getopt.h>
 
 #include <iostream>
 #include <iomanip>
@@ -92,7 +95,19 @@
 std::string	dataname;
 
 // run data generation inside a child process
-const bool runforked = false;
+bool gopt_forkrun = false;
+
+// algorithms selected at commandline
+std::vector<const char*> gopt_algorithm;
+
+// size limit specified on commandline
+size_t gopt_sizelimit = 0;
+
+// write input string to file name matching name (for debugging artificial).
+bool gopt_writeinput = false;
+
+// write output suffix and lcp array (to file name matching input)
+bool gopt_writeoutput = false;
 
 // file name of statistics output
 static const char* statsfile = "sac-runs1.txt";
@@ -130,6 +145,7 @@ static const size_t block_size = 64*1024;
 #include "tools/debug.h"
 #include "tools/timerseries.h"
 #include "tools/statsfile.h"
+#include "tools/lp_hash_table.h"
 #include "tools/lcp.h"
 #include "tools/uint40.h"
 #include "tools/losertree.h"
@@ -179,7 +195,7 @@ typedef stxxl::VECTOR_GENERATOR<offset_type,4,8,block_size,
 
 /// helper to print out readable characters
 template <typename alphabet_type>
-static inline std::string dumpC(alphabet_type c)
+static inline std::string strC(alphabet_type c)
 {
     std::ostringstream oss;
     if (c < 128 && isalnum(c)) oss << '\'' << (char)c << '\'';
@@ -212,7 +228,7 @@ public:
         {
             SACA<alphabet_vector_type, offset_vector_type> saca;
 
-            if (is_disabled(saca.name())) {
+            if (!gopt_algorithm_match(saca.name().c_str())) {
                 (std::cout << "Skipping disabled " << saca.name() << "!\n").flush();
                 return;
             }
@@ -258,7 +274,7 @@ public:
 
                 for (size_t j = 0; (size_t)suffixarray[i]+j < stringRAM.size() && j < 20; ++j)
                 {
-                    std::cout << dumpC(stringRAM[(size_t)suffixarray[i]+j]) << " ";
+                    std::cout << strC(stringRAM[(size_t)suffixarray[i]+j]) << " ";
                 }
 
                 std::cout << "\n";
@@ -380,7 +396,7 @@ public:
         out.append_statsmap(g_statscache);
 
         // maybe write output to filesystem
-        if (getenv("WRITEOUTPUT") && *getenv("WRITEOUTPUT") == '1')
+        if (gopt_writeoutput)
         {
             std::string outfile = dataname + ".sa" + (char)('0' + sizeof(offset_type));
             std::ofstream out(outfile.c_str());
@@ -409,7 +425,7 @@ public:
 
 #if LCP_CALC
         // maybe write output to filesystem
-        if (getenv("WRITEOUTPUT") && *getenv("WRITEOUTPUT") == '1')
+        if (gopt_writeoutput)
         {
             std::string outfile = dataname + ".lcp" + (char)('0' + sizeof(offset_type));
             std::ofstream out(outfile.c_str());
@@ -520,12 +536,32 @@ public:
            >> "maxalloc" << stxxl::block_manager::get_instance()->max_allocated();
     }
 
-    bool is_disabled(const std::string& sacaname)
+    static inline bool gopt_algorithm_match(const char* algoname)
     {
-        if (!getenv("ALGO")) return false;
-        return (std::string(getenv("ALGO")).find(sacaname) == std::string::npos);
+        if (!gopt_algorithm.size()) return true;
+
+        // iterate over gopt_algorithm list as a filter
+        for (size_t ai = 0; ai < gopt_algorithm.size(); ++ai) {
+            if (strstr(algoname, gopt_algorithm[ai]) != NULL)
+                return true;
+        }
+
+        return false;
     }
 };
+
+void print_usage(const char* prog)
+{
+    std::cout << "Usage: " << prog << " [options] <dataname>" << std::endl
+              << "Options:" << std::endl
+              << "  -a, --algo <match>          Run only algorithms containing this substring." << std::endl
+              << "  -F, --fork                  Fork before running algorithm and load data within fork!" << std::endl
+              << "  -s, --size <size>           Limit the input size to this number of characters." << std::endl
+              << "      --writeinput            Write input string to file matching dataname." << std::endl
+              << "  -W, --writeoutput           Write output SA/LCP to files matching dataname." << std::endl
+              << std::endl
+        ;
+}
 
 int main(int argc, char* argv[])
 {
@@ -536,8 +572,73 @@ int main(int argc, char* argv[])
 
     // parse command line parameters
 
+    while (1)
+    {
+        static const struct option longopts[] = {
+            { "algo",    required_argument,  0, 'a' },
+            { "help",    no_argument,        0, 'h' },
+            { "fork",    no_argument,        0, 'F' },
+            { "writeinput", no_argument,     0, 1 },
+            { "writeoutput", no_argument,    0, 'W' },
+            { 0,0,0,0 },
+        };
+
+        int index;
+        int argi = getopt_long(argc, argv, "hs:FWa:", longopts, &index);
+
+        if (argi < 0) break;
+
+        switch (argi)
+        {
+        case 'h':
+            print_usage(argv[0]);
+            print_datasource_list();
+            return 0;
+
+        case 'a':
+            gopt_algorithm.push_back(optarg);
+            std::cout << "Option -a: selecting algorithms containing " << optarg << std::endl;
+            break;
+
+        case 'F':
+            gopt_forkrun = true;
+            std::cout << "Option -F: forking before each algorithm run and loading data after fork." << std::endl;
+            break;
+
+        case 1:
+            gopt_writeinput = true;
+            std::cout << "Option --writeinput: writing input to file names matching dataname." << std::endl;
+            break;
+
+        case 'W':
+            gopt_writeoutput = true;
+            std::cout << "Option -W: writing output SA/LCP to file names matching input dataname." << std::endl;
+            break;
+
+        case 's':
+            if (!parse_filesize(optarg, gopt_sizelimit)) {
+                std::cout << "Option -s: invalid size parameter: " << optarg << std::endl;
+                exit(EXIT_FAILURE);
+            }
+            std::cout << "Option -s: limiting input size to " << gopt_sizelimit << std::endl;
+            break;
+
+        default:
+            std::cout << "Invalid parameter: " << argi << std::endl;
+            print_usage(argv[0]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (optind == argc) { // no input data parameter given
+        print_usage(argv[0]);
+        print_datasource_list();
+        return 0;
+    }
+
+    // pass remaining command line parameters
     datasource_list_type datasource_list;
-    if (!select_datasource_list(argc,argv,datasource_list))
+    if (!select_datasource_list(argc - optind,argv + optind,datasource_list))
         return 0;
 
     // run construction algorithms on all datasources specified
@@ -549,7 +650,7 @@ int main(int argc, char* argv[])
 
         dataname = ds->name;
 
-        int pid = runforked ? fork() : 0;
+        int pid = gopt_forkrun ? fork() : 0;
         if (pid == 0)
         {
             alphabet_vector_type string;
@@ -572,7 +673,7 @@ int main(int argc, char* argv[])
             return 0;
 #endif
 
-            if (runforked) return 0;
+            if (gopt_forkrun) return 0;
             else continue;
         }
 

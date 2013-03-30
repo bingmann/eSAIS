@@ -9,7 +9,7 @@
  * Inducing suffix and LCP arrays in external memory. ALENEX'13.
  *
  ******************************************************************************
- * Copyright (C) 2012 Timo Bingmann <tb@panthema.net>
+ * Copyright (C) 2012-2013 Timo Bingmann <tb@panthema.net>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -27,173 +27,142 @@
 
 namespace esais
 {
+/*************************************************************************************************************
+ * Compilation Options                                                                                       *
+ *************************************************************************************************************/
+
+// run self-verifying parts of the code, very slow!
+#define ESAIS_SELF_CHECK        0
+
+// enable LCP calculation
+#define ESAIS_LCP_CALC          LCP_CALC
+
+// enable specific LCP calculation method
+#if !defined(ESAIS_LCP_CALC_EXT) && !defined(ESAIS_LCP_CALC_INT)
+#define ESAIS_LCP_CALC_EXT      0
+#define ESAIS_LCP_CALC_INT      LCP_CALC
+#endif
+
+// enable discarding of sequences of unique characters
+#ifndef ESAIS_DISCARD_UNIQUES
+#define ESAIS_DISCARD_UNIQUES   0
+#endif
+
+// log PQ fill levels to file
+#define ESAIS_LOG_PQFILL        0
+
+// log estimate of wasted space in tuples
+#ifndef ESAIS_COUNT_WASTED
+#define ESAIS_COUNT_WASTED      0
+#endif
+
+// *******************************************************************************************************
+// *** Debugging Switches
+
+static const bool debug = true;
+
+static const bool debug_substring_split = false;
+static const bool debug_substring_decoder = false;
+static const bool debug_substring_merge = false;
+static const bool debug_lexnamepairs = false;
+static const bool debug_rerank = false;
+static const bool debug_recursive_input = false;
+static const bool debug_recursive_output = false;
+static const bool debug_sstarlcp = false;
+static const bool debug_sstarlcp_merge = false;
+static const bool debug_sstarlcp_result = false;
+static const bool debug_sstarlcp_use = false;
+static const bool debug_induce_input = false;
+static const bool debug_induce_split = false;
+static const bool debug_induce_arrays = false;
+static const bool debug_induceL = false;
+static const bool debug_induceL_lcp = false;
+static const bool debug_induceS = false;
+static const bool debug_induceS_lcp = false;
+static const bool debug_output_write = false;
+static const bool debug_output_merge = false;
 
 /*************************************************************************************************************
  * Helper Routines                                                                                           *
  *************************************************************************************************************/
 
-// {{{ STXXL Extensions
+// {{{ Debug macros
 
-template <typename BlkTp_, typename BIDIteratorTp_>
-class my_buf_ostream : public stxxl::buf_ostream<BlkTp_, BIDIteratorTp_>
+#if ESAIS_LOG_PQFILL
+#define LOG_SIZE(x)     do { (x); } while(0)
+#else
+#define LOG_SIZE(x)     do {} while(0)
+#endif
+
+#if ESAIS_COUNT_WASTED
+#define LOG_WASTED(x)   do { g_wasted_iovolume += (x); } while(0)
+#else
+#define LOG_WASTED(x)   do {} while(0)
+#endif
+
+#if ESAIS_LCP_CALC
+#define ESAIS_LCP_CALCX(x)      x
+#else
+#define ESAIS_LCP_CALCX(x)
+#endif
+
+#if ESAIS_LCP_CALC_INT
+#define ESAIS_LCP_CALCX_INT(x)      x
+#else
+#define ESAIS_LCP_CALCX_INT(x)
+#endif
+
+#if ESAIS_COUNT_WASTED
+
+/// count wasted io volumne, hacky global variable
+static size_t   g_wasted_iovolume = 0;
+
+#endif // ESAIS_COUNT_WASTED
+
+/// count maximum size of internal memory RMQ structure, hacky global variable
+static size_t   g_mainmemlcp = 0;
+
+#if ESAIS_LCP_CALC_EXT && !defined(ESAIS_LCP_CALC_INT)
+#define ESAIS_LCP_CALC_INT      0
+#endif
+
+#if ESAIS_LCP_CALC_INT && !defined(ESAIS_LCP_CALC_EXT)
+#define ESAIS_LCP_CALC_EXT      0
+#endif
+
+// }}} Debug macros
+
+// {{{ Variable stream writing with varints
+
+//! \brief put some type as bytes at the end of a stream
+template <typename Stream, typename Type>
+static inline Stream& stream_put(Stream& s, const Type& t)
 {
-protected:
+    assert( sizeof(t) % sizeof(typename Stream::block_type::type) == 0 );
+    assert( sizeof(t) < Stream::block_type::size );
 
-    typedef BlkTp_      block_type;
-    typedef BIDIteratorTp_ bid_iterator_type;
-
-    typedef stxxl::buf_ostream<BlkTp_, BIDIteratorTp_>  _Parent;
-
-    typedef my_buf_ostream<BlkTp_, BIDIteratorTp_>  _Self;
-
-public:
-
-    //! \brief Constructs output stream object
-    //! \param first_bid \c bid_iterator pointing to the first block of the stream
-    //! \param nbuffers number of buffers for internal use
-    my_buf_ostream(bid_iterator_type first_bid, stxxl::int_type nbuffers)
-        : _Parent(first_bid, nbuffers)
+    for (size_t j = 0; j < sizeof(Type) / sizeof(typename Stream::block_type::type); ++j)
     {
+        s << ( ((typename Stream::block_type::type*)&t)[j] );
     }
+    return s;
+}
 
-    //! \brief fill current block with padding and flush
-    _Parent& fill(typename _Parent::const_reference record)
-    {
-        while (_Parent::current_elem != 0)
-        {
-            _Parent::operator<<(record);
-        }
-        return *this;
-    }
-
-    //! \brief put some type as bytes at the end
-    template <typename Type>
-    _Self& put(const Type& t)
-    {
-        assert( sizeof(t) % sizeof(typename block_type::type) == 0 );
-        assert( sizeof(t) < block_type::size );
-
-        for (size_t j = 0; j < sizeof(Type) / sizeof(typename block_type::type); ++j)
-        {
-            _Parent::operator<<( ((typename block_type::type*)&t)[j] );
-        }
-        return *this;
-    }
-
-    //! \brief put varint as bytes to stream
-    _Self& put_varint(size_t v)
-    {
-        if (v < 128) {
-            *this << ((v >> 0) & 0x7F);
-        }
-        else if (v < 128*128) {
-            *this << (((v >> 0) & 0x7F) | 0x80);
-            *this << ((v >> 7) & 0x7F);
-        }
-        else if (v < 128*128*128) {
-            *this << (((v >> 0) & 0x7F) | 0x80);
-            *this << (((v >> 7) & 0x7F) | 0x80);
-            *this << ((v >> 14) & 0x7F);
-        }
-        else if (v < 128*128*128*128) {
-            *this << (((v >> 0) & 0x7F) | 0x80);
-            *this << (((v >> 7) & 0x7F) | 0x80);
-            *this << (((v >> 14) & 0x7F) | 0x80);
-            *this << ((v >> 21) & 0x7F);
-        }
-        else {
-            abort();
-        }
-        return *this;
-    }
-};
-
-template <typename BlkTp_, typename BIDIteratorTp_>
-class my_buf_istream : public stxxl::buf_istream<BlkTp_, BIDIteratorTp_>
+//! \brief get some type as bytes from the end of a stream
+template <typename Stream, typename Type>
+static inline Stream& stream_get(Stream& s, Type& t)
 {
-protected:
+    assert( sizeof(t) % sizeof(typename Stream::block_type::type) == 0 );
+    assert( sizeof(t) < Stream::block_type::size );
 
-    typedef BlkTp_      block_type;
-    typedef BIDIteratorTp_ bid_iterator_type;
-
-    typedef stxxl::buf_istream<BlkTp_, BIDIteratorTp_>  _Parent;
-
-    typedef my_buf_istream<BlkTp_, BIDIteratorTp_>  _Self;
-
-public:
-
-    //! \brief Constructs output stream object
-    //! \param first_bid \c bid_iterator pointing to the first block of the stream
-    //! \param nbuffers number of buffers for internal use
-    my_buf_istream(bid_iterator_type _begin, bid_iterator_type _end, stxxl::int_type nbuffers)
-        : _Parent(_begin, _end, nbuffers)
+    for (size_t j = 0; j < sizeof(Type) / sizeof(typename Stream::block_type::type); ++j)
     {
+        s >> ( ((typename Stream::block_type::type*)&t)[j] );
     }
+    return s;
+}
 
-    //! \brief get some type as bytes from the end
-    template <typename Type>
-    _Self& get(Type& t)
-    {
-        assert( sizeof(t) % sizeof(typename block_type::type) == 0 );
-        assert( sizeof(t) < block_type::size );
-
-        for (size_t j = 0; j < sizeof(Type) / sizeof(typename block_type::type); ++j)
-        {
-            _Parent::operator>>( ((typename block_type::type*)&t)[j] );
-        }
-        return *this;
-    }
-
-    //! \brief get varint as bytes to stream
-    _Self& get_varint(unsigned int& v)
-    {
-        unsigned char in;
-        *this >> in;
-
-        if (in & 0x80) {
-            v = (in & 0x7F);
-
-            *this >> in;
-            if (in & 0x80) {
-                v |= ((unsigned int)in & 0x7F) << 7;
-
-                *this >> in;
-                if (in & 0x80) {
-                    v |= ((unsigned int)in & 0x7F) << 14;
-
-                    *this >> in;
-                    if (in & 0x80) {
-                        abort();
-                    }
-                    else {
-                        v |= (unsigned int)in << 21;
-                    }
-                }
-                else {
-                    v |= (unsigned int)in << 14;
-                }
-            }
-            else {
-                v |= (unsigned int)in << 7;
-            }
-        }
-        else {
-            v = (in & 0x7F);
-        }
-        return *this;
-    }
-
-    //! \brief get varint as bytes to stream
-    _Self& get_varint(uint40& v)
-    {
-        // expand this proc to decode larger varints if this is every needed.
-        unsigned int x;
-        get_varint(x);
-        v = x;
-        return *this;
-    }
-};
-
+//! \brief return number of bytes needed to encode a varint of given value
 static unsigned int sizeof_varint(unsigned int x)
 {
     if (x < 128) return 1;
@@ -204,8 +173,92 @@ static unsigned int sizeof_varint(unsigned int x)
     return 0;
 }
 
+//! \brief encode a varint and append it to a stream
+template <typename Stream>
+static inline Stream& stream_put_varint(Stream& s, size_t v)
+{
+    if (v < 128) {
+        s << ((v >> 0) & 0x7F);
+    }
+    else if (v < 128*128) {
+        s << (((v >> 0) & 0x7F) | 0x80);
+        s << ((v >> 7) & 0x7F);
+    }
+    else if (v < 128*128*128) {
+        s << (((v >> 0) & 0x7F) | 0x80);
+        s << (((v >> 7) & 0x7F) | 0x80);
+        s << ((v >> 14) & 0x7F);
+    }
+    else if (v < 128*128*128*128) {
+        s << (((v >> 0) & 0x7F) | 0x80);
+        s << (((v >> 7) & 0x7F) | 0x80);
+        s << (((v >> 14) & 0x7F) | 0x80);
+        s << ((v >> 21) & 0x7F);
+    }
+    else {
+        abort(); // enlarge allowed range if ever needed.
+    }
+    return s;
+}
+
+//! \brief decode a varint from end of stream
+template <typename Stream>
+static inline Stream& stream_get_varint(Stream& s, unsigned int& v)
+{
+    unsigned char in;
+    s >> in;
+
+    if (in & 0x80) {
+        v = (in & 0x7F);
+
+        s >> in;
+        if (in & 0x80) {
+            v |= ((unsigned int)in & 0x7F) << 7;
+
+            s >> in;
+            if (in & 0x80) {
+                v |= ((unsigned int)in & 0x7F) << 14;
+
+                s >> in;
+                if (in & 0x80) {
+                    abort();
+                }
+                else {
+                    v |= (unsigned int)in << 21;
+                }
+            }
+            else {
+                v |= (unsigned int)in << 14;
+            }
+        }
+        else {
+            v |= (unsigned int)in << 7;
+        }
+    }
+    else {
+        v = (in & 0x7F);
+    }
+    return s;
+}
+
+//! \brief decode a varint from end of stream
+template <typename Stream>
+static inline Stream& stream_get_varint(Stream& s, uint40& v)
+{
+    // expand this proc to decode larger varints if ever needed.
+    unsigned int x;
+    stream_get_varint(s,x);
+    v = x;
+    return s;
+}
+
+// }}} Variable stream writing with varints
+
+// {{{ STXXL Extensions
+
 /**
- * Creates a stream object that reads from a stxxl::vector from back to front.
+ * Creates a stream object that reads from a stxxl::vector from back to front. This class is also an adapter
+ * for the first call to the algorithm; it matches the interface of recursive calls.
  */
 template <class InputIterator>
 class my_buf_istream_vector_reverse
@@ -373,6 +426,14 @@ public:
  * Sorter for Variable Length Objects                                                                        *
  *************************************************************************************************************/
 
+/**
+ * The VarlengthSorter implements non-recursive external memory sorting for variable length objects. The
+ * objects are passed by the caller in form of already-sorted runs of sizes theta(M), which are written to
+ * disk. No aggregation of objects is done in this class. Once all runs are written, the sequences can be
+ * streamed back, merged using a tournament tree and outputted in globally sorted order. Each objects is
+ * serialized when written and deserialized when read using it's enclosed .serialize(stream) and
+ * .deserialize(stream) methods.
+ */
 template <typename ValueType, int BlockSize>
 class VarlengthSorter
 {
@@ -380,8 +441,10 @@ public:
 
     // *** Template Arguments
 
+    /// values serialized.
     typedef ValueType           value_type;
 
+    /// block size of written runs
     static const int block_size = BlockSize;
 
     // *** Constructed Types
@@ -395,17 +458,22 @@ public:
 
     typedef typename bid_vector_type::iterator   bid_iterator_type;
 
-    // create typed blocks containing characters
+    /// create typed blocks containing characters
     typedef stxxl::typed_block<block_size, unsigned char> block_type;
 
-    typedef my_buf_ostream<block_type, bid_iterator_type>       buf_ostream_type;
+    /// create byte-oriented buffered output streams
+    typedef stxxl::buf_ostream<block_type, bid_iterator_type>       buf_ostream_type;
 
-    typedef my_buf_istream<block_type, bid_iterator_type>       buf_istream_type;
+    /// create byte-oriented buffered input streams
+    typedef stxxl::buf_istream<block_type, bid_iterator_type>       buf_istream_type;
 
+    /// list of input streams, used when merging runs
     typedef std::vector<buf_istream_type*>       buf_istream_vector_type;
 
 protected:
 
+    /** Functor for tournament tree which feeds the input streams into the loser tree as required by its
+     * interface. */
     struct StreamCompare
     {
         buf_istream_vector_type&        m_istream_vector;
@@ -448,6 +516,7 @@ protected:
 
 protected:
 
+    /// block_manager of stxxl from which to allocate runs
     stxxl::block_manager*               m_bm;
 
     // *** Structures holding references to written runs
@@ -514,9 +583,10 @@ public:
         m_block_seqs.push_back(newbids);
     }
 
+    /// finish input of runs and prepare tournament tree for output
     void sort()
     {
-        //DBG(debug, "Merging " << m_block_seqs.size() << " sequences.");
+        DBG(debug, "VarlengthSorter merging " << m_block_seqs.size() << " sequences.");
 
         m_istream_vector.resize( m_block_seqs.size() );
 
@@ -539,6 +609,7 @@ public:
         m_losertree.play_initial( m_block_seqs.size() );
     }
 
+    /// Free all resources
     void clear()
     {
         for (size_t i = 0; i < m_block_seqs.size(); ++i)
@@ -552,16 +623,19 @@ public:
         m_block_seqs.clear();
     }
 
+    /// stream interface
     bool empty() const
     {
         return m_losertree.done();
     }
 
+    /// stream interface
     value_type& operator*()
     {
         return m_streamcmp.m_head[ m_losertree.top() ];
     }
 
+    /// stream interface
     VarlengthSorter& operator++()
     {
         // get next string in sequence and replay tree
@@ -570,6 +644,8 @@ public:
         return *this;
     }
 
+    /// True if the loser tree indicates that this value is equal to the preceding one. This is however only
+    /// semi-definite; due to comparisons in the tree, an equal pair may go unnoticed.
     bool was_equal() const
     {
         return m_losertree.top_equal();
@@ -577,23 +653,6 @@ public:
 };
 
 // }}}
-
-#if ESAIS_COUNT_WASTED
-
-/// count wasted io volumne
-static size_t   g_wasted_iovolume = 0;
-
-#endif // ESAIS_COUNT_WASTED
-
-static size_t   g_mainmemlcp = 0;
-
-#if ESAIS_LCP_CALC_EXT && !defined(ESAIS_LCP_CALC_INT)
-#define ESAIS_LCP_CALC_INT      0
-#endif
-
-#if ESAIS_LCP_CALC_INT && !defined(ESAIS_LCP_CALC_EXT)
-#define ESAIS_LCP_CALC_EXT      0
-#endif
 
 /*************************************************************************************************************
  * Top-Level Algorithm Class                                                                                 *
@@ -603,75 +662,6 @@ template <typename AlphabetType, typename OffsetType, typename SizeType>
 class eSAIS
 {
 public:
-
-    // *******************************************************************************************************
-    // *** Debugging Switches
-
-    static const bool debug = true;
-
-    static const bool debug_substring_split = false;
-    static const bool debug_substring_decoder = false;
-    static const bool debug_substring_merge = false;
-    static const bool debug_lexnamepairs = false;
-    static const bool debug_rerank = false;
-    static const bool debug_recursive_input = false;
-    static const bool debug_recursive_output = false;
-    static const bool debug_sstarlcp = false;
-    static const bool debug_sstarlcp_merge = false;
-    static const bool debug_sstarlcp_result = false;
-    static const bool debug_sstarlcp_use = false;
-    static const bool debug_induce_input = false;
-    static const bool debug_induce_split = false;
-    static const bool debug_induce_arrays = false;
-    static const bool debug_induceL = false;
-    static const bool debug_induceL_lcp = false;
-    static const bool debug_induceS = false;
-    static const bool debug_induceS_lcp = false;
-    static const bool debug_output_write = false;
-    static const bool debug_output_merge = false;
-
-#define ESAIS_SELF_CHECK        0
-
-#define ESAIS_LCP_CALC          LCP_CALC
-
-#if !defined(ESAIS_LCP_CALC_EXT) && !defined(ESAIS_LCP_CALC_INT)
-#define ESAIS_LCP_CALC_EXT      0
-#define ESAIS_LCP_CALC_INT      LCP_CALC
-#endif
-
-#ifndef ESAIS_DISCARD_UNIQUES
-#define ESAIS_DISCARD_UNIQUES   0
-#endif
-
-#define ESAIS_LOG_PQFILL        0
-
-#ifndef ESAIS_COUNT_WASTED
-#define ESAIS_COUNT_WASTED      0
-#endif
-
-#if ESAIS_LOG_PQFILL
-#define LOG_SIZE(x)     do { (x); } while(0)
-#else
-#define LOG_SIZE(x)     do {} while(0)
-#endif
-
-#if ESAIS_COUNT_WASTED
-#define LOG_WASTED(x)   do { g_wasted_iovolume += (x); } while(0)
-#else
-#define LOG_WASTED(x)   do {} while(0)
-#endif
-
-#if ESAIS_LCP_CALC
-#define ESAIS_LCP_CALCX(x)      x
-#else
-#define ESAIS_LCP_CALCX(x)
-#endif
-
-#if ESAIS_LCP_CALC_INT
-#define ESAIS_LCP_CALCX_INT(x)      x
-#else
-#define ESAIS_LCP_CALCX_INT(x)
-#endif
 
     // *******************************************************************************************************
     // *** Size parameters
@@ -707,7 +697,7 @@ public:
      *********************************************************************************************************/
 
     /// helper to print out readable characters
-    static inline std::string dumpC(alphabet_type c)
+    static inline std::string strC(const alphabet_type& c)
     {
         std::ostringstream oss;
         if (c < alphabet_type(128) && isalnum((size_type)c)) oss << '\'' << (char)((size_type)c) << '\'';
@@ -716,7 +706,7 @@ public:
     }
 
     /// helper to format ctype_type values
-    static inline const char* dumpT(ctype_type t)
+    static inline const char* strT(const ctype_type& t)
     {
         if (t == TYPE_L) return "L";
         if (t == TYPE_S) return "S";
@@ -725,14 +715,14 @@ public:
 
     /// helper to format a sequence of characters
     template <typename Iterator>
-    static inline std::string dumpS(Iterator begin, Iterator end)
+    static inline std::string strS(Iterator begin, Iterator end)
     {
         std::ostringstream oss;
         if (begin == end) return oss.str();
-        if (begin != end) oss << dumpC(*begin);
+        if (begin != end) oss << strC(*begin);
         for (Iterator s = begin+1; s != end; ++s)
         {
-            oss << " " << dumpC(*s);
+            oss << " " << strC(*s);
         }
         return oss.str();
     }
@@ -740,7 +730,7 @@ public:
     /// helper to format a sequence of characters and calculate their type if the type of the last character
     /// is known.
     template <typename Iterator>
-    static inline std::string dumpST(Iterator begin, Iterator end, ctype_type lasttype)
+    static inline std::string strST(Iterator begin, Iterator end, ctype_type lasttype)
     {
         std::ostringstream oss;
         if (begin == end) return oss.str();
@@ -767,22 +757,22 @@ public:
         for (Iterator s = begin; s != end; ++s, ++cti)
         {
             if (s != begin) oss << " ";
-            oss << dumpC(*s) << dumpT(*cti);
+            oss << strC(*s) << strT(*cti);
         }
         return oss.str();
     }
 
-    /// helper to format a sequence of characters and calculate their type if the type of the last character
-    /// is known.
+    /// helper to format a sequence of characters and calculate their type if all types of the characters are
+    /// known.
     template <typename Iterator, typename IteratorCTypes>
-    static inline std::string dumpST2(Iterator begin, Iterator end, IteratorCTypes begin_ctype)
+    static inline std::string strST2(Iterator begin, Iterator end, IteratorCTypes begin_ctype)
     {
         std::ostringstream oss;
         if (begin == end) return oss.str();
         for (Iterator s = begin; s != end; ++s, ++begin_ctype)
         {
             if (s != begin) oss << " ";
-            oss << dumpC(*s) << dumpT((ctype_type)*begin_ctype);
+            oss << strC(*s) << strT((ctype_type)*begin_ctype);
         }
         return oss.str();
     }
@@ -810,7 +800,7 @@ public:
             if (*strB < *strA) return +1;
         }
 
-        //std::cout << "strings [" << dumpST(beginA,endA,lasttypeA) << "] and [" << dumpST(beginB,endB,lasttypeB) << "] match chars\n" ;
+        //std::cout << "strings [" << strST(beginA,endA,lasttypeA) << "] and [" << strST(beginB,endB,lasttypeB) << "] match chars\n" ;
 
         if (strA == endA && strB == endB)
         {
@@ -842,7 +832,7 @@ public:
 
             ctype_type tb = ( strB+1 == endB ) ? lasttypeB : ( *strB < *(strB+1) ? TYPE_S : TYPE_L );
 
-            //std::cout << "type of *strB = " << dumpT(tb) << "\n";
+            //std::cout << "type of *strB = " << strT(tb) << "\n";
 
             if (lasttypeA != tb)
                 return (lasttypeA - tb);
@@ -861,7 +851,7 @@ public:
 
             ctype_type ta = ( strA+1 == endA ) ? lasttypeA : ( *strA < *(strA+1) ? TYPE_S : TYPE_L );
 
-            //std::cout << "type of *strA = " << dumpT(ta) << "\n";
+            //std::cout << "type of *strA = " << strT(ta) << "\n";
 
             if (ta != lasttypeB)
                 return (ta - lasttypeB);
@@ -892,7 +882,7 @@ public:
             ++lcp;
         }
 
-        //std::cout << "strings [" << dumpST(beginA,endA,lasttypeA) << "] and [" << dumpST(beginB,endB,lasttypeB) << "] match chars\n" ;
+        //std::cout << "strings [" << strST(beginA,endA,lasttypeA) << "] and [" << strST(beginB,endB,lasttypeB) << "] match chars\n" ;
 
         if (strA == endA && strB == endB)
         {
@@ -920,7 +910,7 @@ public:
 
             if (strB+1 == endB) repcount += endrepcountB; // add endrepcount if at end
 
-            //std::cout << "type of *strB = " << dumpT(tb) << "\n";
+            //std::cout << "type of *strB = " << strT(tb) << "\n";
 
             lcp += std::min(repcount, endrepcountA);
 
@@ -942,7 +932,7 @@ public:
 
             if (strA+1 == endA) repcount += endrepcountA; // add endrepcount if at end
 
-            //std::cout << "type of *strA = " << dumpT(ta) << "\n";
+            //std::cout << "type of *strA = " << strT(ta) << "\n";
 
             lcp += std::min(repcount, endrepcountB);
 
@@ -1118,16 +1108,24 @@ public:
 
     // {{{ ShortStringSorter
 
+    /**
+     * ShortStringSorter splits the input into S*-substrings and creates Substring tuples, which are
+     * serialized and sorted by a VarlengthSorter. The sorted output is then lexicographically named.
+     */
     class ShortStringSorter
     {
     public:
 
+        /// Prototype declaration
         struct Substring;
 
+        /// Use the VarlengthSorter for Substrings, which are serialized.
         typedef VarlengthSorter<Substring, block_size>    ssorter_type;
 
+        /// The VarlengthSorter
         ssorter_type            m_ssorter;
 
+        /// Total input size
         size_type               m_inputsize;
 
         // ***************************************************************************************************
@@ -1170,7 +1168,7 @@ public:
 
             friend std::ostream& operator<< (std::ostream& os, const Substring& s)
             {
-                return os << "(" << s.index << ",[" << dumpST(s.str.begin(), s.str.end(), s.lasttype) << "]," << dumpT(s.lasttype)
+                return os << "(" << s.index << ",[" << strST(s.str.begin(), s.str.end(), s.lasttype) << "]," << strT(s.lasttype)
                              ESAIS_LCP_CALCX(<< "," << s.endrepcount) << ")";
             }
 
@@ -1187,20 +1185,20 @@ public:
             {
                 // read offset_type as index
 
-                is.get( index );
+                stream_get( is, index );
                 DBG(debug_substring_decoder, "index = " << index);
 
                 // read varint length and lasttype ctype from sequence
                 unsigned int len;
-                is.get_varint(len);
+                stream_get_varint(is, len);
 
                 lasttype = (ctype_type)(len & 1);
                 len /= 2;
 
                 // read varint S*-endrepcount
-                ESAIS_LCP_CALCX( is.get_varint(endrepcount); )
+                ESAIS_LCP_CALCX( stream_get_varint(is,endrepcount); )
 
-                DBG(debug_substring_decoder, "varint length = " << len << ", ctype = " << dumpT(lasttype)
+                DBG(debug_substring_decoder, "varint length = " << len << ", ctype = " << strT(lasttype)
                     ESAIS_LCP_CALCX(<< ", endrepcount = " << endrepcount));
 
                 // read string
@@ -1209,7 +1207,7 @@ public:
 
                 for (unsigned int i = 0; i < len; ++i)
                 {
-                    is.get( str[i] );
+                    stream_get( is, str[i] );
                 }
 
                 if (debug_substring_decoder)
@@ -1217,7 +1215,7 @@ public:
                     std::cout << "string = ";
                     for (unsigned int i = 0; i < len; ++i)
                     {
-                        std::cout << dumpC( str[i] ) << " ";
+                        std::cout << strC( str[i] ) << " ";
                     }
                     std::cout << "\n";
                 }
@@ -1226,10 +1224,14 @@ public:
             }
         };
 
+        /**
+         * When splitting the input into S*-substring, instead of copying characters we use this pointer
+         * struct to mark offset and length. The Ptrs are sorted and serialized into the VarlengthSorter.
+         */
         struct SubstringPtr
         {
-            size_type                   offset;
-            uint16_t                    len;
+            size_type           offset;
+            uint16_t            len;    // no S*-substring is allowed > 64 KiB, otherwise it is split
             ESAIS_LCP_CALCX(offset_type endrepcount);
 
 #if ESAIS_LCP_CALC
@@ -1245,7 +1247,6 @@ public:
                 assert( len > 0 );
             }
 #endif
-
             friend std::ostream& operator<< (std::ostream& os, const SubstringPtr& s)
             {
                 return os << "(" << s.offset << "," << s.len << ")";
@@ -1262,6 +1263,9 @@ public:
             }
         };
 
+        /**
+         * Sorting Functional for SubstringPtr objects.
+         */
         struct SubstringPtrSort
         {
             const alphabet_type*        str;
@@ -1315,7 +1319,6 @@ public:
                 // for S-types longer repcounts are ranked higher
                 return a.endrepcount > b.endrepcount;
             }
-
             // thereby the highest repcounts meet at the L/S-seam and correct LCPs are calculated
 
             // this is called by radixsort when all items in [begin,end) have same char and type, remains to
@@ -1339,18 +1342,21 @@ public:
 #endif
         };
 
-        // *** Varlength Serialization
+        /*
+         * Serialization functional for serializing SubstringPtr into the VarlengthSorter. The serialization
+         * is then read as a Substring object.
+         */ 
         struct SubstringPtrWriter
         {
-            size_type baseoffset;
-            alphabet_type* buffer;
-            unsigned char* buffer_types;
+            size_type baseoffset;               // offset of all substrings
+            alphabet_type* buffer;              // the current portion of the input
+            unsigned char* buffer_types;        // the character types of the current portion
 
             inline void operator()(typename ssorter_type::buf_ostream_type& os, const SubstringPtr& sp) const
             {
                 // write offset_type index
                 offset_type index = baseoffset + sp.offset;
-                os.put(index);
+                stream_put( os, index );
 
                 // prepare ctype bit of last character
                 unsigned char ctype = buffer_types[ sp.offset + sp.len - 1 ];
@@ -1358,19 +1364,20 @@ public:
 
                 // write varint string size: first character contains ctype as second-highest bit
                 assert( sp.len != 0 );
-                os.put_varint( sp.len * 2 + ctype );
+                stream_put_varint( os, sp.len * 2 + ctype );
 
-                // write varint s*-repcount
-                ESAIS_LCP_CALCX( os.put_varint( sp.endrepcount ); )
+                // write varint S*-repcount
+                ESAIS_LCP_CALCX( stream_put_varint( os, sp.endrepcount ); )
 
                 // write string character-wise
                 for (size_type i = sp.offset; i < sp.offset + sp.len; ++i)
                 {
-                    os.put( buffer[i] );
+                    stream_put( os, buffer[i] );
                 }
             }
         };
 
+        /// Left-over from experiments with 8-bit radixsort
         struct RadixsortTransform1
         {
             static size_t limit(size_t depth)
@@ -1384,6 +1391,7 @@ public:
             }
         };
 
+        /// Left-over from experiments with 16-bit radixsort
         struct RadixsortTransform2
         {
             static size_t limit(size_t depth)
@@ -1402,30 +1410,8 @@ public:
             }
         };
 
-        struct RadixsortTransform4
-        {
-            static size_t limit(size_t depth)
-            {
-                return (depth % 4 == 3) ? (2 * 0x100) + 1 : 0x100 + 1;
-            }
-
-            static inline unsigned int index(const SubstringPtr& p, size_t depth)
-            {
-                if (depth / 4 == p.len) return 0;
-
-                if (depth % 4 == 3)
-                    return 2 * (p.str[depth / 2] & 0xFF) + p.ctypeptr[depth / 2] + 1;
-                else if (depth % 4 == 2)
-                    return ((p.str[depth / 2] >>  8) & 0xFF) + 1;
-                else if (depth % 4 == 1)
-                    return ((p.str[depth / 2] >> 16) & 0xFF) + 1;
-                else
-                    return ((p.str[depth / 2] >> 24) & 0xFF) + 1;
-            }
-        };
-
         // ***************************************************************************************************
-        // *** Read input (in reverse) and split into substrings.
+        // *** Read input (in reverse) and split into S*- or split substrings.
 
 #if ESAIS_LCP_CALC
         typedef stxxl::queue< uint16_t, block_size >         SStarSize_type;
@@ -1435,7 +1421,8 @@ public:
         template <typename InputStreamReverse>
         void process_input(InputStreamReverse& inputrev, unsigned int depth)
         {
-            // First scan the input back to front to find all S* positions
+            // *** First scan the input back to front to find all S* positions
+
             stxxl::queue<offset_type,block_size>     sstar_positions;
 
             {
@@ -1445,7 +1432,7 @@ public:
                 ctype_type prev_ctype = TYPE_L;         // last char is always L-type
                 alphabet_type prev_char = *inputrev;
 
-                DBG(debug_substring_split, "input[" << spos << "]: " << dumpC(prev_char) << " - " << dumpT(prev_ctype));
+                DBG(debug_substring_split, "input[" << spos << "]: " << strC(prev_char) << " - " << strT(prev_ctype));
 
                 --inputrev;
 
@@ -1455,7 +1442,7 @@ public:
 
                     ctype_type this_ctype = (*inputrev < prev_char || (*inputrev == prev_char && prev_ctype == TYPE_S)) ? TYPE_S : TYPE_L;
 
-                    DBG(debug_substring_split, "input[" << spos-1 << "]: " << dumpC(*inputrev) << " - " << dumpT(this_ctype));
+                    DBG(debug_substring_split, "input[" << spos-1 << "]: " << strC(*inputrev) << " - " << strT(this_ctype));
 
                     if (prev_ctype == TYPE_S && this_ctype == TYPE_L)
                     {
@@ -1475,7 +1462,8 @@ public:
                 g_statscache >> "S*-indexes" >> depth << sstar_positions.size();
             }
 
-            // Rescan input from back to front and build substring (pointer,size) pairs
+            // *** Rescan input from back to front and build substring (pointer,size) pairs
+
             inputrev.rewind(memsize / 4);
 
             // value for for block splitting: at most 64kb lengths (so length can be 2 bytes)
@@ -1512,9 +1500,9 @@ public:
             alphabet_type prev_char = 0;
             size_type sarea_pos = sarea_end;
 
-            size_type total_substrings = 0;
+            size_type total_substrings = 0;     // total S*-substrings
 
-            unsigned int overlap = 0;
+            unsigned int overlap = 0;           // carry-over characters from last portion of input
 
 #if ESAIS_LCP_CALC
             size_type repcount = 0;
@@ -1523,7 +1511,7 @@ public:
 
             while ( sarea_end > 0 && !sstar_positions.empty() )
             {
-                // fetch new string area of size M
+                // fetch new input portion of size M
 
                 size_type sarea_begin = (sarea_end >= (size_type)buffersize ? sarea_end - buffersize : 0);
                 size_type sarea_size = sarea_end - sarea_begin;
@@ -1566,7 +1554,7 @@ public:
                     repcount = (buffer[i] == prev_char) ? repcount+1 : 0;
 #endif // ESAIS_LCP_CALC
 
-                    DBG(debug_substring_split, "next input: " << dumpC( buffer[i] ) << " at " << sarea_begin + i << " of ctype " << dumpT(this_ctype)
+                    DBG(debug_substring_split, "next input: " << strC( buffer[i] ) << " at " << sarea_begin + i << " of ctype " << strT(this_ctype)
                         ESAIS_LCP_CALCX(<< " with repcount " << repcount) << " and S*-distance: " << (sarea_pos - (size_type)sstar_positions.front()));
 
                     assert( sarea_pos >= (size_type)sstar_positions.front() );
@@ -1616,7 +1604,7 @@ public:
                 assert( substrings.size() <= buffersize/2 );
 
                 DBG(debug_substring_split, "Remaining: ["  << sarea_begin << "," << sarea_begin + currstringlength << ") = "
-                    << dumpS( &buffer[0], &buffer[currstringlength] ));
+                    << strS( &buffer[0], &buffer[currstringlength] ));
 
                 // *** Sort SubstringPtr using radix or quicksort
 
@@ -1680,6 +1668,9 @@ public:
     public:
 
 #if ESAIS_LCP_CALC
+        /// Save LCP_Names, the LCP of two consecutive lexnames, for answering RMQs later. One would expect
+        /// this to be only uint16_t, but due to repcount being included in the LCP, we actually need an
+        /// offset_type.
         typedef stxxl::deque2< offset_type, block_size >         lcp_deque_type;
         lcp_deque_type          lexname_lcp_deque;
 #endif // ESAIS_LCP_CALC
@@ -1729,7 +1720,7 @@ public:
                 bool is_different = false;
 
                 if ( m_ssorter.was_equal() ) {
-                    // comparison not necessary: previous and this are equal by comparision within loser tree
+                    // comparison not necessary: prev and this are equal by comparision within loser tree
                     is_different = false;
                     ESAIS_LCP_CALCX( lcp = topstr.str.size() + topstr.endrepcount );
                 }
@@ -1870,7 +1861,7 @@ public:
 
         void output_Lentry(const alphabet_type& char0, const offset_type& index)
         {
-            DBG(debug_output_write, "L-SAEntry: char " << dumpC(char0) << " index " << index);
+            DBG(debug_output_write, "L-SAEntry: char " << strC(char0) << " index " << index);
 
             // save index into Lresult queue and if needed the size of the previous sequence
             if (output_char != char0)
@@ -1906,7 +1897,7 @@ public:
 
         void output_Sentry(const alphabet_type& char0, const offset_type& index)
         {
-            DBG(debug_output_write, "S-SAEntry: char " << dumpC(char0) << " index " << index);
+            DBG(debug_output_write, "S-SAEntry: char " << strC(char0) << " index " << index);
 
             // save index into Sresult stack and if needed the size of the previous sequence
             if (output_char != char0)
@@ -1974,7 +1965,7 @@ public:
                 }
                 else if ( Srun_stack.empty() )
                 {
-                    DBG(debug_output_merge, "Finishing L-sequence of char " << dumpC(Lrun_queue.front().first)
+                    DBG(debug_output_merge, "Finishing L-sequence of char " << strC(Lrun_queue.front().first)
                         << " of length " << Lrun_queue.front().second);
 
                     LScounter = (size_type)Lrun_queue.front().second;
@@ -1983,7 +1974,7 @@ public:
                 }
                 else if ( Lrun_queue.empty() )
                 {
-                    DBG(debug_output_merge, "Finishing S-sequence of char " << dumpC(Srun_stack.top().first)
+                    DBG(debug_output_merge, "Finishing S-sequence of char " << strC(Srun_stack.top().first)
                         << " of length " << Srun_stack.top().second);
 
                     LScounter = (size_type)Srun_stack.top().second;
@@ -1992,7 +1983,7 @@ public:
                 }
                 else if ( Lrun_queue.front().first <= Srun_stack.top().first )
                 {
-                    DBG(debug_output_merge, "Switching to L-sequence of char " << dumpC(Lrun_queue.front().first)
+                    DBG(debug_output_merge, "Switching to L-sequence of char " << strC(Lrun_queue.front().first)
                         << " of length " << Lrun_queue.front().second);
 
                     LScounter = (size_type)Lrun_queue.front().second;
@@ -2001,7 +1992,7 @@ public:
                 }
                 else
                 {
-                    DBG(debug_output_merge, "Switching to S-sequence of char " << dumpC(Srun_stack.top().first)
+                    DBG(debug_output_merge, "Switching to S-sequence of char " << strC(Srun_stack.top().first)
                         << " of length " << Srun_stack.top().second);
 
                     LScounter = (size_type)Srun_stack.top().second;
@@ -2093,7 +2084,7 @@ public:
 
             friend std::ostream& operator<< (std::ostream& os, const CTuple& t)
             {
-                return os << "(" << t.index << ",[" << dumpS(t.chars, t.chars + t.charfill) << "],"
+                return os << "(" << t.index << ",[" << strS(t.chars, t.chars + t.charfill) << "],"
                           << (t.continued ? 'C' : '_') << "," << t.repcount << ")";
             }
         } __attribute__((packed));
@@ -2181,7 +2172,7 @@ public:
             friend std::ostream& operator<< (std::ostream& os, const STuple& t)
             {
                 return os << "(" << t.index
-                          << ",[" << dumpS(t.chars, t.chars + t.charfill) << "],"
+                          << ",[" << strS(t.chars, t.chars + t.charfill) << "],"
                           << t.rank << "," << (t.continued ? 'C' : '_')
                           ESAIS_LCP_CALCX( << "," << t.repcount )
                           << ")";
@@ -2223,7 +2214,7 @@ public:
             }
         };
 
-        /// Tuples of the L-PQ and S-PQ
+        /// Tuples of the L-PQ and S-PQ, and of the L*-Array
         struct PQTuple
         {
             offset_type         index;          // i
@@ -2268,7 +2259,7 @@ public:
             friend std::ostream& operator<< (std::ostream& os, const PQTuple& t)
             {
                 os << "(" << t.index
-                   << ",[" << dumpS(t.chars, t.chars + t.charfill) << "],"
+                   << ",[" << strS(t.chars, t.chars + t.charfill) << "],"
                    << t.rank << ","
                    << (t.continued ? 'C' : '_');
 #if ESAIS_LCP_CALC_INT
@@ -2479,7 +2470,7 @@ public:
                 else if (t.type == LCP_QUERY_LSTAR)
                     return os << "(RMQ(" << t.v1 << "," << t.target << ") -> " << t.v2 << " +L*)";
                 else if (t.type == LCP_LS_SEAM_QUERY)
-                    return os << "(L/S-seam repcount=" << t.v1 << ", match char=" << dumpC(alphabet_type(t.v2)) << " -> " << t.target << ")";
+                    return os << "(L/S-seam repcount=" << t.v1 << ", match char=" << strC(alphabet_type(t.v2)) << " -> " << t.target << ")";
                 else
                     return os << "(invalid LCPTuple)";
             }
@@ -2604,7 +2595,7 @@ public:
         {
         }
 
-        // {{{ process_input(): PQ and L/S-Array creator
+        // {{{ process_input(): create S* and L/S-Arrays
 
         // ***************************************************************************************************
         // *** Read input from back to front: iterating from S* to S* and storing continuation tuples if
@@ -2653,7 +2644,7 @@ public:
                 ctype_type this_ctype = CALC_THIS_CTYPE;
                 assert( this_ctype == TYPE_L || spos == inputsize );
 
-                DBG(debug_induce_split, "input[" << spos-1 << "]: " << dumpC(*inputrev) << " - type " << dumpT(this_ctype) << " - prev_repcount " << prev_repcount);
+                DBG(debug_induce_split, "input[" << spos-1 << "]: " << strC(*inputrev) << " - type " << strT(this_ctype) << " - prev_repcount " << prev_repcount);
 
                 STuple     stuple;
                 stuple.index = spos;
@@ -2725,7 +2716,7 @@ public:
                 {
                     assert( !inputrev.empty() );
 
-                    DBG(debug_induce_split, "input[" << spos-1 << "]: " << dumpC(*inputrev) << " - type " << dumpT(this_ctype) << " - prev_repcount " << prev_repcount);
+                    DBG(debug_induce_split, "input[" << spos-1 << "]: " << strC(*inputrev) << " - type " << strT(this_ctype) << " - prev_repcount " << prev_repcount);
 
                     if (stuple.charfill < D)
                     {
@@ -2798,7 +2789,7 @@ public:
 
                                 // while this position is not an S*-position, fill up the continuation tuple
 
-                                DBG(debug_induce_split, "input[" << spos-1 << "]: " << dumpC(*inputrev) << " - type " << dumpT(this_ctype) << " - prev_repcount " << prev_repcount);
+                                DBG(debug_induce_split, "input[" << spos-1 << "]: " << strC(*inputrev) << " - type " << strT(this_ctype) << " - prev_repcount " << prev_repcount);
 
                                 // append this L/S-character to L-CTuple
                                 ctuple.chars[ctuple.charfill++] = *inputrev;
@@ -2839,7 +2830,7 @@ public:
 
                                 // while this position is not an S*-position, fill up the continuation tuple
 
-                                DBG(debug_induce_split, "input[" << spos-1 << "]: " << dumpC(*inputrev) << " - type " << dumpT(this_ctype) << " - prev_repcount " << prev_repcount);
+                                DBG(debug_induce_split, "input[" << spos-1 << "]: " << strC(*inputrev) << " - type " << strT(this_ctype) << " - prev_repcount " << prev_repcount);
 
                                 // append this L/S-character to S-CTuple
                                 ctuple.chars[ctuple.charfill++] = *inputrev;
@@ -2949,7 +2940,7 @@ public:
             // save the BWT char of the extracted PQTuple or constructed S*/L* seed PQTuple
             void set_bwtchar(const PQTuple& t)
             {
-                DBG(debug_induceL_lcp || debug_induceS_lcp, "Setting BWT at rank " << t.rank << " to bwtchar " << dumpC(t.chars[1]));
+                DBG(debug_induceL_lcp || debug_induceS_lcp, "Setting BWT at rank " << t.rank << " to bwtchar " << strC(t.chars[1]));
 
                 prevbwt[ t.chars[1] ] = t.rank;
             }
@@ -2964,7 +2955,7 @@ public:
             // queryL LCP RMQ: find prevbwt position and do RMQ (prevbwt_pos,this]
             void queryL(PQTuple& t, const offset_type& thislcp)
             {
-                DBG(debug_induceL_lcp, "Setting L-LCP at rank " << t.rank << " to lcp " << thislcp << " and find prevbwt " << dumpC(t.chars[1]));
+                DBG(debug_induceL_lcp, "Setting L-LCP at rank " << t.rank << " to lcp " << thislcp << " and find prevbwt " << strC(t.chars[1]));
 
                 DBG(debug_induceL_lcp, "LCP[" << t.rank << "] = " << thislcp);
                 rmqstruct.set(t.rank, thislcp);
@@ -2973,12 +2964,12 @@ public:
                 if (bwtiter == prevbwt.end())
                 {
                     // no previous bwt occurance:
-                    DBG(debug_induceL_lcp, "L-LCP bwtchar " << dumpC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
+                    DBG(debug_induceL_lcp, "L-LCP bwtchar " << strC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
                     t.lcp = 1;
                 }
                 else
                 {
-                    DBG1(debug_induceL_lcp, "L-LCP bwtchar " << dumpC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second+1 << " to " << t.rank << ")");
+                    DBG1(debug_induceL_lcp, "L-LCP bwtchar " << strC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second+1 << " to " << t.rank << ")");
                     t.lcp = rmqstruct.query( bwtiter->second+1, t.rank ) + 1;
                     DBG3(debug_induceL_lcp, " -> result lcp = " << t.lcp);
                 }
@@ -3016,18 +3007,18 @@ public:
             // queryS LCP RMQ for L*s: find prevbwt positions, do RMQ [prevbwt_pos,this) and then set L*-LCP
             void queryS_lstar(PQTuple& t, offset_type thislcp)  // no const& here, as thislcp must be copied.
             {
-                DBG(debug_induceS_lcp, "S-LCP query at rank " << t.rank << " with bwtchar " << dumpC(t.chars[1]) << " for L*-LCP");
+                DBG(debug_induceS_lcp, "S-LCP query at rank " << t.rank << " with bwtchar " << strC(t.chars[1]) << " for L*-LCP");
 
                 bwtiter_type bwtiter = prevbwt.find(t.chars[1]);
                 if (bwtiter == prevbwt.end())
                 {
                     // no previous bwt occurance:
-                    DBG(debug_induceS_lcp, "S-LCP bwtchar " << dumpC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
+                    DBG(debug_induceS_lcp, "S-LCP bwtchar " << strC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
                     t.lcp = 1;
                 }
                 else
                 {
-                    DBG1(debug_induceS_lcp, "S-LCP bwtchar " << dumpC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second << " to " << t.rank-1 << ")");
+                    DBG1(debug_induceS_lcp, "S-LCP bwtchar " << strC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second << " to " << t.rank-1 << ")");
                     t.lcp = rmqstruct.query( bwtiter->second , t.rank - 1 ) + 1;
                     DBG3(debug_induceS_lcp, " -> result lcp = " << t.lcp);
                 }
@@ -3043,18 +3034,18 @@ public:
             // queryS LCP RMQ without lcp labeling (for first positions in repbucket)
             void queryS_nolcp(PQTuple& t)
             {
-                DBG(debug_induceS_lcp, "Query S-LCP at rank " << t.rank << " find prevbwt " << dumpC(t.chars[1]));
+                DBG(debug_induceS_lcp, "Query S-LCP at rank " << t.rank << " find prevbwt " << strC(t.chars[1]));
 
                 bwtiter_type bwtiter = prevbwt.find(t.chars[1]);
                 if (bwtiter == prevbwt.end())
                 {
                     // no previous bwt occurance:
-                    DBG(debug_induceS_lcp, "S-LCP bwtchar " << dumpC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
+                    DBG(debug_induceS_lcp, "S-LCP bwtchar " << strC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
                     t.lcp = 1;
                 }
                 else
                 {
-                    DBG1(debug_induceS_lcp, "S-LCP bwtchar " << dumpC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second << " to " << t.rank-1 << ")");
+                    DBG1(debug_induceS_lcp, "S-LCP bwtchar " << strC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second << " to " << t.rank-1 << ")");
                     t.lcp = rmqstruct.query( bwtiter->second , t.rank - 1 ) + 1;
                     DBG3(debug_induceS_lcp, " -> result lcp = " << t.lcp);
                 }
@@ -3065,7 +3056,7 @@ public:
             // queryS LCP RMQ: first set rank-1's LCP, find prevbwt positions, do RMQ [prevbwt_pos,this)
             void queryS(PQTuple& t, const offset_type& thislcp)
             {
-                DBG(debug_induceS_lcp, "Setting S-LCP at rank " << t.rank << " to lcp " << thislcp << " and find prevbwt " << dumpC(t.chars[1]));
+                DBG(debug_induceS_lcp, "Setting S-LCP at rank " << t.rank << " to lcp " << thislcp << " and find prevbwt " << strC(t.chars[1]));
 
                 DBG(debug_induceS_lcp, "LCP[" << t.rank-1 << "] = " << thislcp);
                 rmqstruct.set(t.rank-1, thislcp);
@@ -3074,12 +3065,12 @@ public:
                 if (bwtiter == prevbwt.end())
                 {
                     // no previous bwt occurance:
-                    DBG(debug_induceS_lcp, "S-LCP bwtchar " << dumpC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
+                    DBG(debug_induceS_lcp, "S-LCP bwtchar " << strC(t.chars[1]) << " has no previous occurance -> tenative lcp = 1");
                     t.lcp = 1;
                 }
                 else
                 {
-                    DBG1(debug_induceS_lcp, "S-LCP bwtchar " << dumpC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second << " to " << t.rank-1 << ")");
+                    DBG1(debug_induceS_lcp, "S-LCP bwtchar " << strC(t.chars[1]) << " has previous occurance: RMQ(" << bwtiter->second << " to " << t.rank-1 << ")");
                     t.lcp = rmqstruct.query( bwtiter->second , t.rank - 1 ) + 1;
                     DBG3(debug_induceS_lcp, " -> result lcp = " << t.lcp);
                 }
@@ -3369,7 +3360,7 @@ public:
 #endif // ESAIS_LCP_CALC
 
                 DBG(debug_induceL, "----------------------------------------------------------------------------------------------------");
-                DBG(debug_induceL, "Extracting from L-PQ with repcount = " << repcount << ", charLimit = " << dumpC(charLimit) << " and rankLimit = " << rankLimit);
+                DBG(debug_induceL, "Extracting from L-PQ with repcount = " << repcount << ", charLimit = " << strC(charLimit) << " and rankLimit = " << rankLimit);
 
                 while ( !Lpq->empty() &&
                         Lpq->top().chars[0] == charLimit && Lpq->top().rank < rankLimit )
@@ -3549,7 +3540,7 @@ public:
 
                 if ( Lpq->empty() || charLimit != Lpq->top().chars[0])
                 {
-                    DBG(debug_induceL, "RepcountStack: pushing repcount=" << repcount << " and L*-repcount=" << lstar_repcount << " for char " << dumpC(charLimit));
+                    DBG(debug_induceL, "RepcountStack: pushing repcount=" << repcount << " and L*-repcount=" << lstar_repcount << " for char " << strC(charLimit));
                     MaxRepcount mr = { charLimit, repcount+1, lstar_repcount };
                     MaxRepcountStack.push(mr);
                 }
@@ -3791,7 +3782,7 @@ public:
                 repcount = (charLimit == prevCharLimit) ? repcount+1 : 0;
 
                 DBG(debug_induceS, "----------------------------------------------------------------------------------------------------");
-                DBG(debug_induceS, "Extracting from S-PQ with charLimit = " << dumpC(charLimit) << " and rankLimit = " << rankLimit);
+                DBG(debug_induceS, "Extracting from S-PQ with charLimit = " << strC(charLimit) << " and rankLimit = " << rankLimit);
 
                 while ( !Spq->empty() &&
                         Spq->top().chars[0] == charLimit && Spq->top().rank < rankLimit)
@@ -3984,16 +3975,16 @@ public:
                     }
                     else if ( MaxRepcountStack.top().charbkt != charLimit )
                     {
-                        DBG(debug_induceS_lcp, "Top max repcount stack char " << dumpC(MaxRepcountStack.top().charbkt) << " != " << charLimit);
+                        DBG(debug_induceS_lcp, "Top max repcount stack char " << strC(MaxRepcountStack.top().charbkt) << " != " << charLimit);
                         m = 0;
                     }
                     else
                     {
-                        DBG(debug_induceS_lcp, "Top max repcount stack char " << dumpC(MaxRepcountStack.top().charbkt) << " matches, using max repcount value " << MaxRepcountStack.top().maxrepcount);
+                        DBG(debug_induceS_lcp, "Top max repcount stack char " << strC(MaxRepcountStack.top().charbkt) << " matches, using max repcount value " << MaxRepcountStack.top().maxrepcount);
                         m = std::min(m, MaxRepcountStack.top().maxrepcount);
                     }
 
-                    DBG(debug_induceS_lcp, "Stack max repcount for char " << dumpC(charLimit) << " -> result = " << m);
+                    DBG(debug_induceS_lcp, "Stack max repcount for char " << strC(charLimit) << " -> result = " << m);
                     DBG(debug_induceS, "--> LCP " << m << " (= L/S-seam output)");
 
                     m_result.output_Sentry_lcp( m );
@@ -4083,16 +4074,16 @@ public:
                     }
                     else if ( MaxRepcountStack.top().charbkt != a2 )
                     {
-                        DBG(debug_induceS_lcp, "Top max repcount stack char " << dumpC(MaxRepcountStack.top().charbkt) << " != " << a2);
+                        DBG(debug_induceS_lcp, "Top max repcount stack char " << strC(MaxRepcountStack.top().charbkt) << " != " << a2);
                         m = 0;
                     }
                     else
                     {
-                        DBG(debug_induceS_lcp, "Top max repcount stack char " << dumpC(MaxRepcountStack.top().charbkt) << " matches, using max repcount value " << MaxRepcountStack.top().maxrepcount);
+                        DBG(debug_induceS_lcp, "Top max repcount stack char " << strC(MaxRepcountStack.top().charbkt) << " matches, using max repcount value " << MaxRepcountStack.top().maxrepcount);
                         m = std::min(m, MaxRepcountStack.top().maxrepcount);
                     }
 
-                    DBG(debug_induceS_lcp, "Stack max repcount for char " << dumpC(a2) << " -> result = " << m);
+                    DBG(debug_induceS_lcp, "Stack max repcount for char " << strC(a2) << " -> result = " << m);
 
                     m_result.output_Sentry_lcp( m );
 
@@ -4753,7 +4744,7 @@ public:
                         std::cout << i << " : " << recoutput[i] << " : ";
 
                         for (size_t j = 0; recoutput[i]+j < recinput.size() && j < 20; ++j)
-                            std::cout << dumpC(recinput[recoutput[i]+j]) << " ";
+                            std::cout << strC(recinput[recoutput[i]+j]) << " ";
 
                         std::cout << "\n";
                     }
@@ -5032,7 +5023,7 @@ public:
 #endif // ESAIS_LCP_CALC
 
                         for (size_t j = 0; recoutput[i]+j < recinput.size() && j < 20; ++j)
-                            std::cout << dumpC(recinput[recoutput[i]+j]) << " ";
+                            std::cout << strC(recinput[recoutput[i]+j]) << " ";
 
                         std::cout << "\n";
                     }

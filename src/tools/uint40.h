@@ -75,6 +75,11 @@ public:
         return ull();
     }
 
+    inline uint64_t u64() const
+    {
+        return ((uint64_t)high) << 32 | (uint64_t)low;
+    }
+
     // prefix increment operator
     inline uint40& operator++ ()
     {
@@ -148,6 +153,7 @@ public:
 } __attribute__((packed));
 
 namespace std {
+
 template<>
 class numeric_limits<uint40>
 {
@@ -159,8 +165,11 @@ public:
                                         std::numeric_limits<uint8_t>::max()); }
 };
 
-namespace tr1
-{
+} // namespace std
+
+namespace std {
+namespace tr1 {
+
 template <>
 struct hash<uint40> : public unary_function<uint40, size_t>
 {
@@ -169,6 +178,34 @@ struct hash<uint40> : public unary_function<uint40, size_t>
         return v.ull();
     }
 };
-} // namespace tr1
 
+} // namespace tr1
 } // namespace std
+
+namespace lp_hash_table {
+
+template <>
+inline size_t hash(const unsigned char& key)
+{
+    return hash((uint32_t)key);
+}
+
+template <>
+inline size_t hash(const unsigned char& key, unsigned int i)
+{
+    return hash((uint32_t)key, i);
+}
+
+template <>
+inline size_t hash(const uint40& key)
+{
+    return hash(key.u64());
+}
+
+template <>
+inline size_t hash(const uint40& key, unsigned int i)
+{
+    return hash(key.u64(), i);
+}
+
+} // namespace lp_hash_table
