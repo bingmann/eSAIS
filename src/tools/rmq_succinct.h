@@ -146,7 +146,7 @@ protected:
     static inline DTsucc clearbits(DTsucc n, DTidx x)
     {
         static const DTsucc HighestBitsSet[8] =
-            { ~0, ~1, ~3, ~7, ~15, ~31, ~63, ~127 };
+            { 0xFF, 0xFE, 0xFC, 0xF8, 0xF0, 0xE0, 0xC0, 0x80 };
 	return n & HighestBitsSet[x];
     }
 

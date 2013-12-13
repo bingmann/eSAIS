@@ -31,7 +31,7 @@ struct sa_index_stream_type
     typedef tuples::triple<offset_type, offset_type, offset_type> value_type;
 
 private:
-    size_t      m_counter;
+    offset_type   m_counter;
 
     InputStream&  m_input;
 
@@ -41,8 +41,10 @@ public:
     sa_index_stream_type(InputStream& input)
         : m_counter(0), m_input(input)
     {
-        if (!m_input.empty())
-            m_curr = value_type(*m_input, m_counter++, 0);
+        if (!m_input.empty()) {
+            m_curr = value_type(*m_input, m_counter, 0);
+            ++m_counter;
+        }
     }
 
     const value_type& operator* () const
@@ -53,8 +55,10 @@ public:
     sa_index_stream_type& operator++ ()
     {
         ++m_input;
-        if (!m_input.empty())
-            m_curr = value_type(*m_input, m_counter++, m_curr.first);
+        if (!m_input.empty()) {
+            m_curr = value_type(*m_input, m_counter, m_curr.first);
+            ++m_counter;
+        }
         return *this;
     }
 
@@ -69,7 +73,7 @@ struct pair_2nd_stream_type
 {
     typedef typename InputStream::value_type pair_type;
 
-    typedef typename pair_type::first_type value_type;
+    typedef typename pair_type::second_type value_type;
 
 private:
     InputStream&  m_input;

@@ -169,7 +169,7 @@ void generate(int k, int n, Container& out)
 
     while( (i = deb.next_digit()) != k )
     {
-	out[o++] = (i + 1);
+	out[o++] = (i - 1 + '0');
     }
 }
 

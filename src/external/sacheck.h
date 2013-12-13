@@ -45,7 +45,7 @@ class tuplize_sa_index
     InputSA&		m_input;
 
     /// current position in input
-    size_t              m_counter;
+    offset_type         m_counter;
 
     bool		m_finished;
 

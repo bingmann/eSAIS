@@ -240,6 +240,22 @@ public:
             debruijn::generate(100,4,string);
             fixzero = true;
         }
+        else if (dataname == "artificial/debruijn-(2,28)")
+        {
+            if (!size) return size_error();
+
+            string.resize(pow(2,28));
+            debruijn::generate(2,28,string);
+            fixzero = true;
+        }
+        else if (dataname == "artificial/debruijn-(2,4)")
+        {
+            if (!size) return size_error();
+
+            string.resize(pow(2,4));
+            debruijn::generate(2,4,string);
+            fixzero = true;
+        }
         else if (dataname == "artificial/fibonacci")
         {
             if (!size) return size_error();
@@ -631,29 +647,5 @@ bool select_datasource_list(int argc, char* argv[], datasource_list_type& dataso
             datasource_list.swap(newlist);
         }
     }
-    return true;
-}
-
-/// Parse a string like "343KB" or "44g" into the corresponding size in bytes
-bool parse_filesize(const char* str, size_t& outsize)
-{
-    char* endptr;
-    outsize = strtoul(str,&endptr,10);
-    if (!endptr) return false;
-
-    if ( *endptr == 0 || ( (*endptr == 'b' || *endptr == 'B') && *(endptr+1) == 0) )
-        outsize *= 1;
-    else if ( (*endptr == 'k' || *endptr == 'K') &&
-              (*(endptr+1) == 0 || ( (*(endptr+1) == 'b' || *(endptr+1) == 'B') && *(endptr+2) == 0) ) )
-        outsize *= 1024;
-    else if ( (*endptr == 'm' || *endptr == 'M') &&
-              (*(endptr+1) == 0 || ( (*(endptr+1) == 'b' || *(endptr+1) == 'B') && *(endptr+2) == 0) ) )
-        outsize *= 1024*1024;
-    else if ( (*endptr == 'g' || *endptr == 'G') &&
-              (*(endptr+1) == 0 || ( (*(endptr+1) == 'b' || *(endptr+1) == 'B') && *(endptr+2) == 0) ) )
-        outsize *= 1024*1024*1024;
-    else
-        return false;
-
     return true;
 }

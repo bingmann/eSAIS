@@ -73,7 +73,7 @@
 #include <map>
 #include <ext/algorithm>
 #include <parallel/algorithm>
-#include <ext/pb_ds/assoc_container.hpp>
+#include <tr1/unordered_map>
 
 #include <stxxl/bits/algo/sort.h>
 #include <stxxl/bits/containers/priority_queue.h>
@@ -81,12 +81,14 @@
 #include <stxxl/bits/containers/queue.h>
 #include <stxxl/bits/containers/stack.h>
 #include <stxxl/bits/containers/sorter.h>
-#include <stxxl/bits/containers/deque2.h>
+#include <stxxl/bits/containers/sequence.h>
 #include <stxxl/bits/io/iostats.h>
 #include <stxxl/bits/mng/buf_istream.h>
+#include <stxxl/bits/mng/buf_istream_reverse.h>
 #include <stxxl/bits/mng/buf_ostream.h>
 #include <stxxl/bits/stream/sort_stream.h>
 #include <stxxl/bits/stream/stream.h>
+#include <stxxl/bits/common/uint_types.h>
 
 #include <omp.h>
 #include <zlib.h>
@@ -101,7 +103,7 @@ bool gopt_forkrun = false;
 std::vector<const char*> gopt_algorithm;
 
 // size limit specified on commandline
-size_t gopt_sizelimit = 0;
+stxxl::uint64 gopt_sizelimit = 0;
 
 // write input string to file name matching name (for debugging artificial).
 bool gopt_writeinput = false;
@@ -147,15 +149,13 @@ static const size_t block_size = 64*1024;
 #include "tools/statsfile.h"
 #include "tools/lp_hash_table.h"
 #include "tools/lcp.h"
-#include "tools/uint40.h"
 #include "tools/losertree.h"
-#include "tools/membuffer.h"
 #include "tools/radixsort.h"
 #include "tools/rmq_succinct.h"
 #include "tools/rmq_stack.h"
 
-//typedef uint32_t                offset_type;
-typedef uint40                  offset_type;
+//typedef uint32_t      offset_type;
+typedef stxxl::uint40   offset_type;
 
 // Maximum input size processed. This is only needed to calculate the maximum
 // number of items in eSAIS's PQs, due to the PQ design. This can be grossly
@@ -192,6 +192,21 @@ typedef stxxl::VECTOR_GENERATOR<InputType::alphabet_type,4,8,block_size,
 typedef stxxl::VECTOR_GENERATOR<offset_type,4,8,block_size,
                                 STXXL_DEFAULT_ALLOC_STRATEGY,
                                 stxxl::random>::result      offset_vector_type;
+
+namespace std {
+namespace tr1 {
+
+template <>
+struct hash<stxxl::uint40> : public unary_function<stxxl::uint40, size_t>
+{
+    size_t operator()(const stxxl::uint40& v) const
+    {
+        return v.ull();
+    }
+};
+
+} // namespace tr1
+} // namespace std
 
 /// helper to print out readable characters
 template <typename alphabet_type>
@@ -533,7 +548,7 @@ public:
            >> "pwritetime" << stats.get_pwrite_time()
            >> "piotime" << stats.get_pio_time()
            >> "iowaittime" << stats.get_io_wait_time()
-           >> "maxalloc" << stxxl::block_manager::get_instance()->max_allocated();
+           >> "maxalloc" << stxxl::block_manager::get_instance()->get_maximum_allocation();
     }
 
     static inline bool gopt_algorithm_match(const char* algoname)
@@ -616,7 +631,7 @@ int main(int argc, char* argv[])
             break;
 
         case 's':
-            if (!parse_filesize(optarg, gopt_sizelimit)) {
+            if (!stxxl::parse_SI_IEC_size(optarg, gopt_sizelimit)) {
                 std::cout << "Option -s: invalid size parameter: " << optarg << std::endl;
                 exit(EXIT_FAILURE);
             }

@@ -243,7 +243,7 @@ static inline Stream& stream_get_varint(Stream& s, unsigned int& v)
 
 //! \brief decode a varint from end of stream
 template <typename Stream>
-static inline Stream& stream_get_varint(Stream& s, uint40& v)
+static inline Stream& stream_get_varint(Stream& s, stxxl::uint40& v)
 {
     // expand this proc to decode larger varints if ever needed.
     unsigned int x;
@@ -257,166 +257,37 @@ static inline Stream& stream_get_varint(Stream& s, uint40& v)
 // {{{ STXXL Extensions
 
 /**
- * Creates a stream object that reads from a stxxl::vector from back to front. This class is also an adapter
- * for the first call to the algorithm; it matches the interface of recursive calls.
+ * Creates a stream object that reads from a stxxl::vector from back to front. This class is an adapter for
+ * the reverse reader now in the STXXL; it matches the interface of recursive calls.
  */
 template <class InputIterator>
-class my_buf_istream_vector_reverse
+class my_vector_bufreader_reverse : public stxxl::vector_bufreader_reverse<InputIterator>
 {
-    typedef typename InputIterator::block_type                   block_type;
-    typedef typename InputIterator::bids_container_iterator      bid_iterator_type;
-
-    typedef typename InputIterator::bids_container_type          bids_container_type;
-
-    typedef stxxl::block_prefetcher<block_type, bid_iterator_type> prefetcher_type;
-
-    typedef my_buf_istream_vector_reverse<InputIterator>        Self;
-
-    typedef typename std::iterator_traits<InputIterator>::value_type value_type;
-
-    typedef value_type&         reference;
-
-protected:
-    /// beginning and end iterators within the vector
-    InputIterator               begin_, current_, end_;
-
-    /// blocks prefetcher
-    prefetcher_type*            prefetcher_;
-
-    /// reversed copy of bids from begin to end
-    bids_container_type         bids_;
-
-    /// current element and block
-    stxxl::int_type             current_elem_;
-    block_type*                 current_blk_;
-
-    // prefetch sequence calculated
-    stxxl::int_type*            prefetch_seq_;
-
-    stxxl::int_type             nbuffers_;
-
 public:
 
-    my_buf_istream_vector_reverse(InputIterator begin, InputIterator end, stxxl::unsigned_type nbuffers = 0)
-        : begin_(begin), end_(end), bids_(0)
+    typedef my_vector_bufreader_reverse self_type;
+
+    typedef stxxl::vector_bufreader_reverse<InputIterator> super_type;
+
+    my_vector_bufreader_reverse(InputIterator begin, InputIterator end, stxxl::unsigned_type nbuffers = 0)
+        : super_type(begin, end, nbuffers)
     {
-        begin.flush();     // flush container
-
-        // check if end is inside a block or pointer to a non-existing one.
-        bid_iterator_type end_iter = end.bid() + (end.block_offset() ? 1 : 0);
-
-        if (end_iter - begin.bid() > 0)
-        {
-            // copy list of bids in reverse
-            bids_.resize( end_iter - begin.bid() );
-            std::reverse_copy( begin.bid(), end_iter, bids_.begin() );
-
-            // calculate prefetch sequence
-            const stxxl::unsigned_type ndisks = stxxl::config::get_instance()->disks_number();
-            if (nbuffers == 0) nbuffers = 2 * ndisks;
-
-            prefetch_seq_ = new stxxl::int_type[bids_.size()];
-
-            nbuffers_ = std::max(2 * ndisks, stxxl::unsigned_type(nbuffers - 1));
-            stxxl::compute_prefetch_schedule(bids_.begin(), bids_.end(), prefetch_seq_, nbuffers_, ndisks);
-
-            // create stream prefetcher
-            prefetcher_ = new prefetcher_type(bids_.begin(), bids_.end(), prefetch_seq_, nbuffers_);
-
-            // fetch block: last in sequence
-            current_blk_ = prefetcher_->pull_block();
-            current_elem_ = block_type::size;
-
-            // skip to beginning of reverse sequence.
-            stxxl::int_type cur = end.block_offset();
-            if (cur == 0) cur = block_type::size;
-
-            while( current_elem_ != cur )
-                operator--();
-
-            operator--();       // move one position before end
-
-            current_ = end;     // reset iteration range
-        }
     }
 
-    //! \brief Frees used internal objects
-    virtual ~my_buf_istream_vector_reverse()
+    self_type& operator -- ()
     {
-        delete prefetcher_;
-        delete[] prefetch_seq_;
-    }
-
-    //! \brief Returns reference to the current record in the stream
-    //! \return reference to the current record in the stream
-    reference current()     /* const */
-    {
-        return current_blk_->elem[current_elem_];
-    }
-
-    //! \brief Returns reference to the current record in the stream
-    //! \return reference to the current record in the stream
-    reference operator * ()     /* const */
-    {
-        return current_blk_->elem[current_elem_];
-    }
-
-    //! \brief Moves to the next record in the stream
-    //! \return reference to itself after the advance
-    Self & operator -- ()
-    {
-        current_elem_--;
-        current_--;
-
-        if (current_elem_ < 0)
-        {
-            current_elem_ = block_type::size-1;
-            bool ok = prefetcher_->block_consumed(current_blk_);
-            assert(ok || empty()); stxxl::STXXL_UNUSED(ok);
-        }
+        super_type::operator++();
         return *this;
     }
 
-    //! \brief Standard stream method
-    bool empty() const
+    self_type& rewind(size_t /* mem */)
     {
-        return (current_ == begin_);
-    }
-
-    //! \brief Return remaining size.
-    size_t size() const
-    {
-        return (current_ - begin_);
-    }
-
-    //! \brief Rewind stream
-    Self& rewind(size_t /* mem */)
-    {
-        delete prefetcher_;
-
-        // recreate stream prefetcher
-        prefetcher_ = new prefetcher_type(bids_.begin(), bids_.end(), prefetch_seq_, nbuffers_);
-
-        // fetch block: last in sequence
-        current_blk_ = prefetcher_->pull_block();
-        current_elem_ = block_type::size;
-
-        // skip to beginning of reverse sequence.
-        stxxl::int_type cur = end_.block_offset();
-        if (cur == 0) cur = block_type::size;
-
-        while( current_elem_ != cur )
-            operator--();
-
-        operator--();       // move one position before end
-
-        current_ = end_;     // reset iteration range
-
+        super_type::rewind();
         return *this;
     }
 
-    //! \brief deallocate stream reader. noop.
-    Self& finish()
+    //! deallocate stream reader. noop.
+    self_type& finish()
     {
         return *this;
     }
@@ -1428,7 +1299,7 @@ public:
             {
                 inputrev.rewind(memsize);
 
-                offset_type spos = inputrev.size()-1;   // sentinel is not processed
+                offset_type spos = (size_type)inputrev.size()-1;   // sentinel is not processed
                 ctype_type prev_ctype = TYPE_L;         // last char is always L-type
                 alphabet_type prev_char = *inputrev;
 
@@ -1485,10 +1356,10 @@ public:
             DBGMEM("Prior to S*-substring buffer allocation");
 
             // temporary buffer for characters part of the current set of substrings
-            membuffer<alphabet_type> buffer (buffersize);
+            stxxl::simple_vector<alphabet_type> buffer (buffersize);
 
             // temporary buffer for types of characters of the current set of substrings
-            membuffer<unsigned char> buffer_types (buffersize);
+            stxxl::simple_vector<unsigned char> buffer_types (buffersize);
 
             // pairs of (index,size) to sort split substrings in buffer
             std::vector< SubstringPtr > substrings;
@@ -1671,8 +1542,8 @@ public:
         /// Save LCP_Names, the LCP of two consecutive lexnames, for answering RMQs later. One would expect
         /// this to be only uint16_t, but due to repcount being included in the LCP, we actually need an
         /// offset_type.
-        typedef stxxl::deque2< offset_type, block_size >         lcp_deque_type;
-        lcp_deque_type          lexname_lcp_deque;
+        typedef stxxl::sequence< offset_type, block_size >         lcp_seq_type;
+        lcp_seq_type          lexname_lcp_seq;
 #endif // ESAIS_LCP_CALC
 
         // ***************************************************************************************************
@@ -1703,7 +1574,7 @@ public:
 
 #if ESAIS_LCP_CALC
             offset_type prevlcp = 0, lcp = 0;
-            lexname_lcp_deque.push_back(0);     // actually undefined
+            lexname_lcp_seq.push_back(0);     // actually undefined
 #endif // ESAIS_LCP_CALC
 
             ++m_totalsize;
@@ -1732,7 +1603,7 @@ public:
 #endif // ESAIS_LCP_CALC
                 }
 
-                ESAIS_LCP_CALCX( lexname_lcp_deque.push_back(lcp) );       // save lcp in lexname order
+                ESAIS_LCP_CALCX( lexname_lcp_seq.push_back(lcp) );       // save lcp in lexname order
 
                 // select name or update unique flags
                 if (is_different) {
@@ -2615,7 +2486,7 @@ public:
                 abort();
             }
 
-            inputsize = inputrev.size();
+            inputsize = (size_type)inputrev.size();
 
             DBG(debug_induce_split, "inputsize = " << inputsize);
 
@@ -2901,8 +2772,11 @@ public:
             //typedef std::map<alphabet_type,offset_type> bwtmap_type;
             //typedef typename bwtmap_type::const_iterator bwtiter_type;
 
-            typedef __gnu_pbds::cc_hash_table<alphabet_type,offset_type> bwtmap_type;
-            typedef typename bwtmap_type::const_point_iterator bwtiter_type;
+            //typedef __gnu_pbds::cc_hash_table<alphabet_type,offset_type> bwtmap_type;
+            //typedef typename bwtmap_type::const_point_iterator bwtiter_type;
+
+            typedef std::tr1::unordered_map<alphabet_type,offset_type> bwtmap_type;
+            typedef typename bwtmap_type::const_iterator bwtiter_type;
 
             bwtmap_type         prevbwt;
 
@@ -4252,14 +4126,14 @@ public:
         }
     };
 
-    class DequeLCPStream : public ShortStringSorter::lcp_deque_type::stream
+    class SeqLCPStream : public ShortStringSorter::lcp_seq_type::stream
     {
     private:
         offset_type     index;
 
     public:
-        DequeLCPStream(const typename ShortStringSorter::lcp_deque_type& deque2)
-            : ShortStringSorter::lcp_deque_type::stream(deque2),
+        SeqLCPStream(const typename ShortStringSorter::lcp_seq_type& sequence)
+            : ShortStringSorter::lcp_seq_type::stream(sequence),
               index(0)
         {
         }
@@ -4268,9 +4142,9 @@ public:
         {
         }
 
-        DequeLCPStream& operator++() {
+        SeqLCPStream& operator++() {
             ++index;
-            ShortStringSorter::lcp_deque_type::stream::operator++();
+            ShortStringSorter::lcp_seq_type::stream::operator++();
             return *this;
         }
 
@@ -4622,7 +4496,7 @@ public:
                 DBG_ST_ARRAY(debug_recursive_input || debug_induce_input, "Base-case Input for Induce (in reverse)", st_nametuple);
 
 #if ESAIS_LCP_CALC
-                typename ShortStringSorter::lcp_deque_type::stream lcpstream ( sss.lexname_lcp_deque );
+                typename ShortStringSorter::lcp_seq_type::stream lcpstream ( sss.lexname_lcp_seq );
 
                 DBG(debug_recursive_input || debug_induce_input, "Base-case LCP Stream for Induce (in SA-order): ");
 
@@ -4638,7 +4512,7 @@ public:
             st_nametuple.sort(memsize / 4);
 
 #if ESAIS_LCP_CALC
-            DequeLCPStream lcpstream ( sss.lexname_lcp_deque );
+            SeqLCPStream lcpstream ( sss.lexname_lcp_seq );
 #else // !ESAIS_LCP_CALC
             ZeroLCPStream lcpstream;
 #endif // ESAIS_LCP_CALC
@@ -4930,8 +4804,8 @@ public:
 
             // direct queries into lcp_names for recursive lcp = 0
 
-            typedef stxxl::deque2< offset_type, block_size >         LCPdirect_deque_type;
-            LCPdirect_deque_type        dq_LCPDirect;
+            typedef stxxl::sequence< offset_type, block_size >         LCPdirect_seq_type;
+            LCPdirect_seq_type        dq_LCPDirect;
 
 #endif // ESAIS_LCP_CALC
 
@@ -5193,12 +5067,12 @@ public:
             st_RMQresult_type st_RMQresult (indexpair_less1st, memsize / 4);
 
             {
-                typename ShortStringSorter::lcp_deque_type::stream lcpstream ( sss.lexname_lcp_deque );
+                typename ShortStringSorter::lcp_seq_type::stream lcpstream ( sss.lexname_lcp_seq );
 
-                typename LCPdirect_deque_type::stream lcpdirect ( dq_LCPDirect );
+                typename LCPdirect_seq_type::stream lcpdirect ( dq_LCPDirect );
 
                 size_type start = 0;
-                membuffer<offset_type> buffer (slabsize);
+                stxxl::simple_vector<offset_type> buffer (slabsize);
 
                 RMQ_Stack<uint32_t, offset_type> slabrmq;
 
@@ -5417,7 +5291,7 @@ public:
     template <typename StringContainer, typename SuffixArrayContainer>
     void run_vector(const StringContainer& string, SuffixArrayContainer& suffixarray)
     {
-        my_buf_istream_vector_reverse<typename StringContainer::const_iterator> vectstream(string.begin(), string.end());
+        my_vector_bufreader_reverse<typename StringContainer::const_iterator> vectstream(string.begin(), string.end());
 
         unsigned int maxdepth = run(vectstream);
         g_statscache >> "maxdepth" << maxdepth;
@@ -5430,7 +5304,7 @@ public:
     template <typename StringContainer, typename SuffixArrayContainer, typename LCPArrayContainer>
     void run_vector_lcp(const StringContainer& string, SuffixArrayContainer& suffixarray, LCPArrayContainer& lcparray)
     {
-        my_buf_istream_vector_reverse<typename StringContainer::const_iterator> vectstream(string.begin(), string.end());
+        my_vector_bufreader_reverse<typename StringContainer::const_iterator> vectstream(string.begin(), string.end());
 
         unsigned int maxdepth = run(vectstream);
         g_statscache >> "maxdepth" << maxdepth;
@@ -5438,8 +5312,8 @@ public:
         suffixarray.resize( string.size() );
         lcparray.resize( string.size() );
 
-        stxxl::vector_bufwriter<SuffixArrayContainer> sa_writer (suffixarray.begin(), suffixarray.end());
-        stxxl::vector_bufwriter<LCPArrayContainer> lcp_writer (lcparray.begin(), lcparray.end());
+        stxxl::vector_bufwriter<typename SuffixArrayContainer::iterator> sa_writer (suffixarray.begin());
+        stxxl::vector_bufwriter<typename LCPArrayContainer::iterator> lcp_writer (lcparray.begin());
 
         for (size_type i = 0; !empty(); operator++(), ++i)
         {
@@ -5509,7 +5383,7 @@ struct SACA
 
     void run(const StringContainer& string, SuffixArrayContainer& suffixarray, unsigned int /* K */)
     {
-        eSAIS<typename StringContainer::value_type, typename SuffixArrayContainer::value_type, uint64_t> algo;
+        eSAIS<typename StringContainer::value_type, typename SuffixArrayContainer::value_type, stxxl::uint64> algo;
 
         g_statscache >> "tuplecharlimit" << int(algo.D);
 
@@ -5524,7 +5398,7 @@ struct SACA
     template <typename LCPArrayContainer>
     void run_lcp(const StringContainer& string, SuffixArrayContainer& suffixarray, LCPArrayContainer& lcparray, unsigned int /* K */)
     {
-        eSAIS<typename StringContainer::value_type, typename SuffixArrayContainer::value_type, uint64_t> algo;
+        eSAIS<typename StringContainer::value_type, typename SuffixArrayContainer::value_type, stxxl::uint64> algo;
 
         g_statscache >> "tuplecharlimit" << int(algo.D);
 

@@ -64,9 +64,9 @@ static inline std::string numFormat(const T& v) {
     stxxl::stats_data nst = *stxxl::stats::get_instance();              \
     stxxl::stats_data st = nst - g_stats;                               \
     std::cout << text << " - MEM: total= " << numFormat(malloc_count_current()) << " delta= " << numFormat((ssize_t)malloc_count_current() - (ssize_t)dmlastsize) << " maxalloc= " << numFormat(malloc_count_peak()) << "\n"; \
-    std::cout << text << " - DISK: total= " << numFormat(stxxl::block_manager::get_instance()->current_allocated()) << " delta= " << numFormat((long)stxxl::block_manager::get_instance()->current_allocated() - (long)dklastsize) << " bytes maxalloc= " << numFormat(stxxl::block_manager::get_instance()->max_allocated()) << " io volume = " << numFormat(st.get_read_volume() + st.get_written_volume()) << "\n"; \
-    dmlastsize = malloc_count_current();                                           \
-    dklastsize = stxxl::block_manager::get_instance()->current_allocated();     \
+    std::cout << text << " - DISK: total= " << numFormat(stxxl::block_manager::get_instance()->get_current_allocation()) << " delta= " << numFormat((long)stxxl::block_manager::get_instance()->get_current_allocation() - (long)dklastsize) << " bytes maxalloc= " << numFormat(stxxl::block_manager::get_instance()->get_maximum_allocation()) << " io volume = " << numFormat(st.get_read_volume() + st.get_written_volume()) << "\n"; \
+    dmlastsize = malloc_count_current();                                                \
+    dklastsize = stxxl::block_manager::get_instance()->get_current_allocation();            \
 } while (0)
 #else // !STXXL_IO_STATS
 #define DBGMEM(text) do {                                                       \
