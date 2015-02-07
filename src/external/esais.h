@@ -3276,8 +3276,7 @@ public:
                     {
                         Lpq->bulk_pop_limit(tuplelist, tupleLimit, 128 * 1024 * 1024);
                         DBG(0, "bulk_pop_limit got=" << tuplelist.size() <<
-                            " rankLimit=" << rankLimit <<
-                            " top.rank=" << _trank);
+                            " rankLimit=" << rankLimit << " top.rank=" << _trank);
                     }
                     else
                     {
@@ -3600,7 +3599,7 @@ public:
 
                 DBG(debug_induceS, "reinserted " << t << " into S-PQ.");
 
-                Spq.push(t);
+                Spq.bulk_push(t);
                 LOG_SIZE(Spq_logger << Spq.size());
                 LOG_WASTED(sizeof(alphabet_type) * (D - t.charfill));
             }
@@ -3615,7 +3614,7 @@ public:
 
         // induceS() input: L*-Array, S-Array. work: S-PQ, PQ-pool, (LCP-PQ, PQ-pool), MergeBuffer. output: (only stack+queue).
 
-        void induceS()
+        void induceS(int depth)
         {
             DBG(debug_induceS, "=== start induceS() ============================================================");
             DBGMEM("induce initializing");
@@ -3677,53 +3676,75 @@ public:
 
             DBGMEM("induce starting");
 
+            std::vector<PQTuple> tuplelist;
+
+            typedef std::pair<alphabet_type, offset_type> output_pair;
+            std::vector<output_pair> outputlist;
+
             while( !Spq->empty() ||                  // tuples left in PQ
                    !LStarArray.empty() )             // L*-positions left as seeds
             {
                 // *** Seed from new L* positions into PQ if possible.
 
-                while ( !LStarArray.empty() &&
-                        ( Spq->empty() || LStarArray->chars[0] > Spq->top().chars[0] ) )
+                if ( !LStarArray.empty() &&
+                     ( Spq->empty() || LStarArray->chars[0] > Spq->top().chars[0] ) )
                 {
-                    PQTuple t = *LStarArray;
+                    bool SpqIsEmpty = Spq->empty();
+                    alphabet_type topChar0 = SpqIsEmpty ? std::numeric_limits<alphabet_type>::min() : Spq->top().chars[0];
+
+                    Spq->bulk_push_begin(0);
+
+                    while ( !LStarArray.empty() &&
+                            ( SpqIsEmpty || LStarArray->chars[0] > topChar0 ) )
+                    {
+                        PQTuple t = *LStarArray;
 #if ESAIS_LCP_CALC_EXT
-                    offset_type t_lcp = LStarLCPStack.top(); LStarLCPStack.pop();
+                        offset_type t_lcp = LStarLCPStack.top(); LStarLCPStack.pop();
 #endif // ESAIS_LCP_CALC_EXT
-                    ++LStarArray;
-                    LOG_SIZE(LStarArray_logger << LStarArray.size());
+                        ++LStarArray;
+                        LOG_SIZE(LStarArray_logger << LStarArray.size());
 
-                    DBG(debug_induceS, "Seeding from L*-tuple " << t);
-                    assert( t.chars[1] < t.chars[0] );
+                        DBG(debug_induceS, "Seeding from L*-tuple " << t);
+                        assert( t.chars[1] < t.chars[0] );
 
-                    t.rank = relRank; ++relRank;
+                        t.rank = relRank; ++relRank;
 
 #if ESAIS_LCP_CALC_INT
 
-                    mmlcp.prepare_char(t.chars[0]);
-                    mmlcp.queryS_lstar(t, t.lcp);
+                        mmlcp.prepare_char(t.chars[0]);
+                        mmlcp.queryS_lstar(t, t.lcp);
 
 #endif
 #if ESAIS_LCP_CALC_EXT
 
-                    LCPTuple l = { LCP_SETTER, t.rank, t_lcp, 0 };
-                    DBG(debug_induceS, "Setter LCP-tuple: " << l);
-                    LCPpq->push(l);
+                        LCPTuple l = { LCP_SETTER, t.rank, t_lcp, 0 };
+                        DBG(debug_induceS, "Setter LCP-tuple: " << l);
+                        LCPpq->push(l);
 
 #endif // ESAIS_LCP_CALC_EXT
 
-                    t.decrease();
+                        t.decrease();
 
-                    Spq->push(t);
-                    LOG_SIZE(Spq_logger << Spq->size());
-                    LOG_WASTED(sizeof(alphabet_type) * (D - t.charfill));
+                        Spq->bulk_push(t);
+                        LOG_SIZE(Spq_logger << Spq->size());
+                        LOG_WASTED(sizeof(alphabet_type) * (D - t.charfill));
+                        SpqIsEmpty = false;
+                        topChar0 = std::max(topChar0, t.chars[0]);
 
-                    DBG(debug_induceS, "inserted S-tuple " << t << " into S-PQ");
+                        DBG(debug_induceS, "inserted S-tuple " << t << " into S-PQ");
+                    }
+
+                    Spq->bulk_push_end();
                 }
 
                 // determine current limit char
 
                 alphabet_type charLimit = Spq->top().chars[0];
                 offset_type rankLimit = relRank;
+
+                PQTuple tupleLimit;
+                tupleLimit.chars[0] = charLimit;
+                tupleLimit.rank = rankLimit;
 
 #if ESAIS_LCP_CALC_INT
                 mmlcp.prepare_char(charLimit);
@@ -3740,90 +3761,134 @@ public:
                 while ( !Spq->empty() &&
                         Spq->top().chars[0] == charLimit && Spq->top().rank < rankLimit)
                 {
-                    PQTuple t = Spq->top(); Spq->pop();
+                    offset_type _trank = Spq->top().rank;
 
-                    LOG_SIZE(Spq_logger << Spq->size());
-
-                    DBG(debug_induceS, "Processing S-tuple " << t << " given index " << t.index << " relRank " << relRank);
-                    DBG(debug_induceS, "--> SA " << t.index << " is next S-entry (relRank = " << relRank << ")");
-
-                    m_result.output_Sentry(t.chars[0], t.index);
-
-                    ESAIS_LCP_CALCX( offset_type srcRank = t.rank; )
-
-                    t.rank = relRank; ++relRank;
-
-#if ESAIS_LCP_CALC
-                    if (prevSrcRank == std::numeric_limits<offset_type>::max())
+                    if (depth <= 0)
                     {
-                        // do nothing for very first entry from this repchar-sequence
-#if ESAIS_LCP_CALC_INT
-                        DBG(debug_induceS_lcp, "LCP: delay calculation for first entry of repbucket");
-                        mmlcp.queryS_nolcp(t);
-#endif
+                        Spq->bulk_pop_limit(tuplelist, tupleLimit, 128 * 1024 * 1024);
+                        DBG(0, "bulk_pop_limit got=" << tuplelist.size() <<
+                            " rankLimit=" << rankLimit << " top.rank=" << _trank);
                     }
                     else
                     {
-#if ESAIS_LCP_CALC_INT
-                        DBG(debug_induceS, "--> LCP " << t.lcp);
-                        m_result.output_Sentry_lcp( t.lcp );
-
-                        if (t.charfill > 1) {
-                            mmlcp.queryS(t, t.lcp);
+                        tuplelist.clear();
+                        while ( !Spq->empty() &&
+                                Spq->top().chars[0] == charLimit && Spq->top().rank < rankLimit )
+                        {
+                            tuplelist.push_back(Spq->top());
+                            Spq->pop();
                         }
-                        else {
-                            mmlcp.setS_noQuery(t, t.lcp);
-                        }
-
-#elif ESAIS_LCP_CALC_EXT
-                        DBG(debug_induceS, "Calculate LCP between prevSrcRank = " << prevSrcRank << " and " << srcRank << "-1 relTarget = " << t.rank-1);
-                        insertSplitRMQ(LCP_QUERY, prevSrcRank, srcRank-1, t.rank-1, LCPpq);
-#endif
                     }
 
-                    prevSrcRank = srcRank;
-#endif // ESAIS_LCP_CALC
+                    if (tuplelist.size() == 0) continue;
+                    outputlist.resize(tuplelist.size());
 
-                    // decrease varlength tuple if possible and reinsert
-#if !ESAIS_LCP_CALC_INT
-                    if (t.charfill == 1)
+                    Spq->bulk_push_begin(0);
+
+#pragma omp parallel for
+                    for (size_type ti = 0; ti < tuplelist.size(); ++ti)
                     {
-                        if ( t.index == offset_type(0) )
-                        {
-                            DBG(debug_induceS, "first position finished. no reinsert.");
-                        }
-                        else if (t.continued)
-                        {
-                            DBG(debug_induceS, "charfill=1, put " << t << " into S-MergeBuffer");
+                        PQTuple& t = tuplelist[ti];
 
-                            ++m_mergecounter;
-                            SMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
+                        LOG_SIZE(Spq_logger << Spq->size());
+
+                        DBG(debug_induceS, "Processing S-tuple " << t << " given index " << t.index << " relRank " << relRank);
+                        DBG(debug_induceS, "--> SA " << t.index << " is next S-entry (relRank = " << relRank << ")");
+
+                        // save output
+                        outputlist[ti] = output_pair(t.chars[0], t.index);
+                        //m_result.output_Sentry(t.chars[0], t.index);
+
+                        ESAIS_LCP_CALCX( offset_type srcRank = t.rank );
+
+                        t.rank = relRank + ti;
+
+#if ESAIS_LCP_CALC
+                        if (prevSrcRank == std::numeric_limits<offset_type>::max())
+                        {
+                            // do nothing for very first entry from this repchar-sequence
+#if ESAIS_LCP_CALC_INT
+                            DBG(debug_induceS_lcp, "LCP: delay calculation for first entry of repbucket");
+                            mmlcp.queryS_nolcp(t);
+#endif
                         }
                         else
                         {
-                            DBG(debug_induceS, "no continuation, finished.");
-                        }
-                    }
-#else // ESAIS_LCP_CALC_INT
-                    if (t.charfill == 1)
-                    {
-                        if ( t.index == offset_type(0) ) {
-                            DBG(debug_induceS, "first position finished. no reinsert.");
-                        }
-                        assert(!t.continued);
-                    }
-                    else if (t.charfill == 2 && t.continued)
-                    {
-                        DBG(debug_induceS, "charfill=2, put " << t << " into S-MergeBuffer");
+#if ESAIS_LCP_CALC_INT
+                            DBG(debug_induceS, "--> LCP " << t.lcp);
+                            m_result.output_Sentry_lcp( t.lcp );
 
-                        ++m_mergecounter;
-                        SMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
-                    }
+                            if (t.charfill > 1) {
+                                mmlcp.queryS(t, t.lcp);
+                            }
+                            else {
+                                mmlcp.setS_noQuery(t, t.lcp);
+                            }
+
+#elif ESAIS_LCP_CALC_EXT
+                            DBG(debug_induceS, "Calculate LCP between prevSrcRank = " << prevSrcRank << " and " << srcRank << "-1 relTarget = " << t.rank-1);
+                            insertSplitRMQ(LCP_QUERY, prevSrcRank, srcRank-1, t.rank-1, LCPpq);
+#endif
+                        }
+
+                        prevSrcRank = srcRank;
+#endif // ESAIS_LCP_CALC
+
+                        // decrease varlength tuple if possible and reinsert
+#if !ESAIS_LCP_CALC_INT
+                        if (t.charfill == 1)
+                        {
+                            if ( t.index == offset_type(0) )
+                            {
+                                DBG(debug_induceS, "first position finished. no reinsert.");
+                            }
+                            else if (t.continued)
+                            {
+                                DBG(debug_induceS, "charfill=1, put " << t << " into S-MergeBuffer");
+
+#pragma omp critical
+                                {
+                                    ++m_mergecounter;
+                                    SMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
+                                }
+                            }
+                            else
+                            {
+                                DBG(debug_induceS, "no continuation, finished.");
+                            }
+                        }
+#else // ESAIS_LCP_CALC_INT
+                        if (t.charfill == 1)
+                        {
+                            if ( t.index == offset_type(0) ) {
+                                DBG(debug_induceS, "first position finished. no reinsert.");
+                            }
+                            assert(!t.continued);
+                        }
+                        else if (t.charfill == 2 && t.continued)
+                        {
+                            DBG(debug_induceS, "charfill=2, put " << t << " into S-MergeBuffer");
+
+#pragma omp critical
+                            {
+                                ++m_mergecounter;
+                                SMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
+                            }
+                        }
 #endif // ESAIS_LCP_CALC_EXT
-                    else
-                    {
-                        reinsertSTuple(t, *Spq);
+                        else
+                        {
+                            reinsertSTuple(t, *Spq);
+                        }
                     }
+
+                    Spq->bulk_push_end();
+
+                    for (typename std::vector<output_pair>::const_iterator oi = outputlist.begin();
+                         oi != outputlist.end(); ++oi)
+                        m_result.output_Sentry(oi->first, oi->second);
+
+                    relRank += (stxxl::uint64)tuplelist.size();
                 }
 
                 if ( SMergeBuffer.size() )      // Some tuples need continuation
@@ -3853,6 +3918,8 @@ public:
 
                     assert( !SArray.empty() );
 
+                    Spq->bulk_push_begin(SMergeBuffer.size());
+
                     while ( !SMergeBuffer.empty() )
                     {
                         assert( !SArray.empty() );
@@ -3879,6 +3946,8 @@ public:
                     }
 
                     SMergeBuffer.clear();
+
+                    Spq->bulk_push_end();
                 }
 
 #if ESAIS_LCP_CALC_EXT
@@ -4082,7 +4151,7 @@ public:
             DBGMEM("Induce process() done");
 
             induceL(sstarlcpstream, depth);
-            induceS();
+            induceS(depth);
 
             DBG(debug, "Merge counter: " << m_mergecounter);
             g_statscache >> "tuplemerges" >> depth << m_mergecounter;
