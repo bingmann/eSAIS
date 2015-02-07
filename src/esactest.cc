@@ -41,7 +41,7 @@
  *****************************************************************************/
 
 #ifndef LCP_CALC
-#define LCP_CALC                1
+#define LCP_CALC                0
 #endif // LCP_CALC
 
 #include <stdlib.h>
@@ -76,7 +76,7 @@
 #include <tr1/unordered_map>
 
 #include <stxxl/bits/algo/sort.h>
-#include <stxxl/bits/containers/priority_queue.h>
+#include <stxxl/bits/containers/parallel_priority_queue.h>
 #include <stxxl/bits/containers/vector.h>
 #include <stxxl/bits/containers/queue.h>
 #include <stxxl/bits/containers/stack.h>
