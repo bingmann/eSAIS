@@ -3018,6 +3018,7 @@ public:
             {
                 // previous position is S-type, so this is L*-type
 
+#pragma omp critical
                 LStarArray->push(t);
 
                 DBG(debug_induceL, "saved " << t << " into L*-Array.");
@@ -3257,10 +3258,12 @@ public:
                 {
                     offset_type _trank = Lpq->top().rank;
 
-                    if (depth == 0 || rankLimit - _trank >= 16*1024*1024)
+                    if (depth == 0)
                     {
                         Lpq->bulk_pop_limit(tuplelist, tupleLimit, 128 * 1024 * 1024);
-                        DBG(1, "exSize = " << rankLimit - _trank << " got: " << tuplelist.size());
+                        DBG(1, "bulk_pop_limit got=" << tuplelist.size() <<
+                            " rankLimit=" << rankLimit <<
+                            " top.rank=" << _trank);
                     }
                     else
                     {
@@ -3278,6 +3281,7 @@ public:
 
                     Lpq->bulk_push_begin(0);
 
+#pragma omp parallel for
                     for (size_type ti = 0; ti < tuplelist.size(); ++ti)
                     {
                         PQTuple& t = tuplelist[ti];
@@ -3287,11 +3291,12 @@ public:
                         DBG(debug_induceL, "Processing L-tuple " << t << " given index " << t.index << " relRank " << relRank);
                         DBG(debug_induceL, "--> SA " << t.index << " is next L-entry (relRank = " << relRank << ")");
 
-                        m_result.output_Lentry(t.chars[0], t.index);
+                        // save output
+                        outputlist[ti] = output_pair(t.chars[0], t.index);
 
-                        ESAIS_LCP_CALCX( offset_type srcRank = t.rank; )
+                        ESAIS_LCP_CALCX( offset_type srcRank = t.rank );
 
-                            t.rank = relRank + ti;
+                        t.rank = relRank + ti;
 
 #if ESAIS_LCP_CALC
                         bool isLStar = (t.charfill > 1 && t.chars[1] < t.chars[0]);
@@ -3357,8 +3362,11 @@ public:
                             {
                                 DBG(debug_induceL, "Process: charfill=1, put " << t << " into L-MergeBuffer.");
 
-                                ++m_mergecounter;
-                                LMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
+#pragma omp critical
+                                {
+                                    ++m_mergecounter;
+                                    LMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
+                                }
                             }
                         }
 #else // ESAIS_LCP_CALC_INT
@@ -3373,8 +3381,11 @@ public:
                         {
                             DBG(debug_induceL, "Process: charfill=2, put " << t << " into L-MergeBuffer.");
 
-                            ++m_mergecounter;
-                            LMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
+#pragma omp critical
+                            {
+                                ++m_mergecounter;
+                                LMergeBuffer.push( CBufferTuple::fromPQTuple(t) );
+                            }
                         }
 #endif // ESAIS_LCP_CALC
                         else
@@ -3384,6 +3395,10 @@ public:
                     }
 
                     Lpq->bulk_push_end();
+
+                    for (typename std::vector<output_pair>::const_iterator oi = outputlist.begin();
+                         oi != outputlist.end(); ++oi)
+                        m_result.output_Lentry(oi->first, oi->second);
 
                     relRank += (stxxl::uint64)tuplelist.size();
                 }
