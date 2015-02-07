@@ -3121,104 +3121,118 @@ public:
                 bool firstsstar = true;
 #endif // ESAIS_LCP_CALC
 
-                while ( !SStarArray.empty() &&
+                if ( !SStarArray.empty() &&
                         ( Lpq->empty() || SStarArray->chars[0] < Lpq->top().chars[0] ) )
                 {
-                    PQTuple t = PQTuple::fromSTuple(*SStarArray);
+                    bool LpqIsEmpty = Lpq->empty();
+                    alphabet_type topChar0 = LpqIsEmpty ? std::numeric_limits<alphabet_type>::max() : Lpq->top().chars[0];
+
+                    Lpq->bulk_push_begin(0);
+
+                    while ( !SStarArray.empty() &&
+                            ( LpqIsEmpty || SStarArray->chars[0] < topChar0 ) )
+                    {
+                        PQTuple t = PQTuple::fromSTuple(*SStarArray);
 #if ESAIS_LCP_CALC
-                    offset_type sstarrepcount = SStarArray->repcount;
-                    alphabet_type seedchar = t.chars[0];
+                        offset_type sstarrepcount = SStarArray->repcount;
+                        alphabet_type seedchar = t.chars[0];
 #endif // ESAIS_LCP_CALC
-                    ++SStarArray;
+                        ++SStarArray;
 
-                    LOG_SIZE(SStarArray_logger << SStarArray.size());
+                        LOG_SIZE(SStarArray_logger << SStarArray.size());
 
-                    DBG(debug_induceL, "Seeding from S*-tuple " << t);
-                    assert( t.chars[1] > t.chars[0] || t.index == inputsize );
+                        DBG(debug_induceL, "Seeding from S*-tuple " << t);
+                        assert( t.chars[1] > t.chars[0] || t.index == inputsize );
 
 #if ESAIS_LCP_CALC_INT
-                    mmlcp.prepare_char(t.chars[0]);
+                        mmlcp.prepare_char(t.chars[0]);
 #endif
 
-                    t.rank = relRank; ++relRank;
+                        t.rank = relRank; ++relRank;
 
 #if ESAIS_LCP_CALC
-                    offset_type t_lcp;
+                        offset_type t_lcp;
 
-                    if ( t.rank == offset_type(0) ) // first position has sentinel lcp 0
-                    {
-                        t_lcp = 0;
-                        firstsstar = false;
-                    }
-                    else if (firstsstar) // first S* in a bucket must be compared to preceding L repcount
-                    {
-                        if (prevCharLimit == seedchar)
+                        if ( t.rank == offset_type(0) ) // first position has sentinel lcp 0
                         {
-                            DBG(debug_induceL, "first S* in bucket: current L repcount = " << repcount << " S*-repcount " << sstarrepcount);
-                            t_lcp = std::min<offset_type>(repcount, sstarrepcount) + 1;
-                        }
-                        else {
-                            DBG(debug_induceL, "first S* in bucket: no preceding Ls -> 0");
                             t_lcp = 0;
+                            firstsstar = false;
                         }
-
-                        while ( !sstarlcpstream.empty() && !SStarLCPSkips.empty() &&
-                                sstarlcpstream.curr_index() == *SStarLCPSkips )
+                        else if (firstsstar) // first S* in a bucket must be compared to preceding L repcount
                         {
-                            DBG(debug_sstarlcp_use, "Skipped S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream);
-                            ++sstarlcpstream, ++SStarLCPSkips;
-                        }
+                            if (prevCharLimit == seedchar)
+                            {
+                                DBG(debug_induceL, "first S* in bucket: current L repcount = " << repcount << " S*-repcount " << sstarrepcount);
+                                t_lcp = std::min<offset_type>(repcount, sstarrepcount) + 1;
+                            }
+                            else {
+                                DBG(debug_induceL, "first S* in bucket: no preceding Ls -> 0");
+                                t_lcp = 0;
+                            }
 
-                        assert( !sstarlcpstream.empty() );
-                        DBG(debug_sstarlcp_use, "S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream << " unused");
-                        ++sstarlcpstream;       // skip unused S*-lcp
-
-                        firstsstar = false;
-                    }
-                    else
-                    {
-                        assert( !sstarlcpstream.empty() );
-                        t_lcp = *sstarlcpstream;
-
-                        // if this position is not a real S*-index, but a forced-split, then calculate dumb
-                        // RMQ to the next real S*.
-                        while ( !sstarlcpstream.empty() && !SStarLCPSkips.empty() &&
-                                sstarlcpstream.curr_index() == *SStarLCPSkips )
-                        {
-                            DBG(debug_sstarlcp_use, "Skipped S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream );
-                            ++sstarlcpstream, ++SStarLCPSkips;
+                            while ( !sstarlcpstream.empty() && !SStarLCPSkips.empty() &&
+                                    sstarlcpstream.curr_index() == *SStarLCPSkips )
+                            {
+                                DBG(debug_sstarlcp_use, "Skipped S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream);
+                                ++sstarlcpstream, ++SStarLCPSkips;
+                            }
 
                             assert( !sstarlcpstream.empty() );
-                            t_lcp = std::min(t_lcp, *sstarlcpstream);
+                            DBG(debug_sstarlcp_use, "S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream << " unused");
+                            ++sstarlcpstream;       // skip unused S*-lcp
+
+                            firstsstar = false;
                         }
+                        else
+                        {
+                            assert( !sstarlcpstream.empty() );
+                            t_lcp = *sstarlcpstream;
 
-                        DBG(debug_sstarlcp_use, "S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream);
+                            // if this position is not a real S*-index, but a forced-split, then calculate dumb
+                            // RMQ to the next real S*.
+                            while ( !sstarlcpstream.empty() && !SStarLCPSkips.empty() &&
+                                    sstarlcpstream.curr_index() == *SStarLCPSkips )
+                            {
+                                DBG(debug_sstarlcp_use, "Skipped S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream );
+                                ++sstarlcpstream, ++SStarLCPSkips;
 
-                        ++sstarlcpstream;
-                        DBG(debug_induceL, "seeding S*-LCP from LCP stream: " << t_lcp);
-                    }
+                                assert( !sstarlcpstream.empty() );
+                                t_lcp = std::min(t_lcp, *sstarlcpstream);
+                            }
+
+                            DBG(debug_sstarlcp_use, "S*-LCP[" << sstarlcpstream.curr_index() << "]: " << *sstarlcpstream);
+
+                            ++sstarlcpstream;
+                            DBG(debug_induceL, "seeding S*-LCP from LCP stream: " << t_lcp);
+                        }
 
 #if ESAIS_LCP_CALC_INT
 
-                    mmlcp.queryL(t, t_lcp);
+                        mmlcp.queryL(t, t_lcp);
 
 #elif ESAIS_LCP_CALC_EXT
 
-                    LCPTuple l = { LCP_SETTER, t.rank, t_lcp, 0 };
-                    DBG(debug_induceL, "Setter LCP-tuple: " << l);
-                    LCPpq->push(l);
+                        LCPTuple l = { LCP_SETTER, t.rank, t_lcp, 0 };
+                        DBG(debug_induceL, "Setter LCP-tuple: " << l);
+                        LCPpq->push(l);
 #endif
 
 #endif // ESAIS_LCP_CALC
 
-                    t.decrease();
+                        t.decrease();
 
-                    Lpq->push(t);
-                    LOG_SIZE(Lpq_logger << Lpq->size());
-                    LOG_WASTED(sizeof(alphabet_type) * (D - t.charfill));
+                        Lpq->bulk_push(t);
+                        LOG_SIZE(Lpq_logger << Lpq->size());
+                        LOG_WASTED(sizeof(alphabet_type) * (D - t.charfill));
+                        LpqIsEmpty = false;
+                        topChar0 = std::min(topChar0, t.chars[0]);
 
-                    DBG(debug_induceL, "inserted L-tuple " << t << " into L-PQ");
+                        DBG(debug_induceL, "inserted L-tuple " << t << " into L-PQ");
+                    }
+
+                    Lpq->bulk_push_end();
                 }
+
                 // determine current limit char
 
                 alphabet_type charLimit = Lpq->top().chars[0];
@@ -3258,10 +3272,10 @@ public:
                 {
                     offset_type _trank = Lpq->top().rank;
 
-                    if (depth == 0)
+                    if (depth <= 0)
                     {
                         Lpq->bulk_pop_limit(tuplelist, tupleLimit, 128 * 1024 * 1024);
-                        DBG(1, "bulk_pop_limit got=" << tuplelist.size() <<
+                        DBG(0, "bulk_pop_limit got=" << tuplelist.size() <<
                             " rankLimit=" << rankLimit <<
                             " top.rank=" << _trank);
                     }
