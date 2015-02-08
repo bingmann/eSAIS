@@ -76,6 +76,7 @@
 #include <tr1/unordered_map>
 
 #include <stxxl/bits/algo/sort.h>
+#include <stxxl/bits/containers/priority_queue.h>
 #include <stxxl/bits/containers/parallel_priority_queue.h>
 #include <stxxl/bits/containers/vector.h>
 #include <stxxl/bits/containers/queue.h>
@@ -118,10 +119,10 @@ static const char* statsfile = "sac-runs1.txt";
 // RAM used by external memory algorithms - DO NOT set this to the total memory
 // available, other structure besides the external sorters need memory as
 // well. Try 80% of available RAM.
-static const size_t ram_use = 4*1024*1024*1024LLU;
+static const size_t ram_use = 16*1024*1024*1024LLU;
 
 #ifndef BLOCKSIZE
-static const size_t block_size = 1024*1024;
+static const size_t block_size = 2*1024*1024;
 #else
 static const size_t block_size = BLOCKSIZE*1024;
 #endif
