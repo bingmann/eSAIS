@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 2.8)
 
 option(WITH_DMALLOC "Use dmalloc for memory profiling" OFF)
 
-option(WITH_MALLOC_COUNT "Use malloc_count for memory profiling" ON)
+option(WITH_MALLOC_COUNT "Use malloc_count for memory profiling" OFF)
 
 # disallow in-source builds
 

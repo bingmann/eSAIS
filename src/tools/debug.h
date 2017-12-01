@@ -40,16 +40,16 @@
     }										\
 } while(0)
 
+#ifdef STXXL_IO_STATS
+stxxl::stats_data g_stats;
+#endif
+
 #ifdef MALLOC_COUNT
 
 #include "malloc_count.h"
 
 static size_t dmlastsize = 0;
 static size_t dklastsize = 0;
-
-#ifdef STXXL_IO_STATS
-stxxl::stats_data g_stats;
-#endif
 
 template <typename T>
 static inline std::string numFormat(const T& v) {
