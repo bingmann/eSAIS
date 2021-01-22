@@ -26,10 +26,10 @@ class LoserTree3Way
 private:
 
     /// marker inside loser tree to save equality comparisons
-    static const uint32_t       EqualMark = 0x80000000;
+    const uint32_t       EqualMark = 0x80000000;
 
     /// marker inside loser tree for finished players
-    static const uint32_t       DoneMark = 0x7FFFFFFF;
+    const uint32_t       DoneMark = 0x7FFFFFFF;
 
     /// the comparator object of this tree
     const Comparator&	m_cmp;

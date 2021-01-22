@@ -335,9 +335,7 @@ public:
         std::string dataname = datasource.name;
 
         std::ostringstream oss;
-        if (getenv("HOME")) oss << getenv("HOME");
-        else oss << ".";
-        oss << "/sac-corpus/" << dataname;
+        oss << dataname;
 
         std::cout << "loading corpus " << dataname;
 
@@ -514,8 +512,7 @@ public:
 
 void read_datasource_directory(datasource_list_type& list, const std::string& subdir)
 {
-    std::string fullpath = getenv("HOME") ? getenv("HOME") : ".";
-    fullpath += "/sac-corpus" + subdir;
+    std::string fullpath = subdir;
 
     struct stat st;
 
